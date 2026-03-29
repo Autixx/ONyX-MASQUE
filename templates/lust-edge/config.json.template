@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "issuer": "ONyX control-plane",
+  "transport": "lust",
+  "protocol": "lust-h2",
+  "service": {
+    "id": "{{ service_id }}",
+    "name": "{{ service_name }}",
+    "node_id": "{{ node_id }}",
+    "public_host": "{{ public_host }}",
+    "public_port": {{ public_port }},
+    "tls_server_name": "{{ tls_server_name }}",
+    "path": "{{ path }}",
+    "stream_path": "{{ stream_path }}",
+    "dns_resolver": "{{ dns_resolver }}"
+  },
+  "trust": {
+    "token_issuer": "onx-control-plane",
+    "token_audience": "onx-lust-edge",
+    "client_ca_cert_path": "/etc/onx/lust-edge/client-ca.cert.pem",
+    "access_token_secret_path": "/etc/onx/lust-edge/access-token.secret"
+  }
+}

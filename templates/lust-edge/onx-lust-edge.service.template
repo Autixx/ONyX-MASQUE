@@ -1,0 +1,15 @@
+[Unit]
+Description=ONyX LuST edge
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/onx/lust-edge
+Environment=ONX_LUST_EDGE_CONFIG_PATH=/etc/onx/lust-edge/config.json
+Environment=ONX_LUST_EDGE_APP_DIR=/opt/onx/lust-edge
+ExecStart=/opt/onx/lust-edge/.venv/bin/python /opt/onx/lust-edge/onx_lust_edge.py
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

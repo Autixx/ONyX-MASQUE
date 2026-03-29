@@ -1,0 +1,151 @@
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import os
+import platform
+import sys
+
+from runtime.ipc import PYWIN32_AVAILABLE
+from runtime.logutil import get_logger
+from runtime.models import CommandEnvelope, DaemonCommand
+from runtime.paths import PIPE_NAME, ensure_runtime_dirs
+from runtime.service import OnyxRuntimeDaemon
+
+try:
+    import pywintypes  # type: ignore
+    import servicemanager  # type: ignore
+    import win32event  # type: ignore
+    import win32pipe  # type: ignore
+    import win32service  # type: ignore
+    import win32serviceutil  # type: ignore
+
+    PYWIN32_SERVICE_AVAILABLE = True
+except ImportError:  # pragma: no cover
+    pywintypes = None
+    servicemanager = None
+    win32event = None
+    win32pipe = None
+    win32service = None
+    win32serviceutil = None
+    PYWIN32_SERVICE_AVAILABLE = False
+
+
+SERVICE_NAME = "ONyXClientDaemon"
+SERVICE_DISPLAY_NAME = "ONyX Client Daemon"
+SERVICE_DESCRIPTION = "Privileged runtime daemon for the ONyX Windows desktop client."
+
+
+class NamedPipeDaemonHost:
+    def __init__(self, pipe_name: str = PIPE_NAME):
+        self.pipe_name = pipe_name
+        self.daemon = OnyxRuntimeDaemon()
+        self.log = get_logger("daemon_host")
+
+    async def serve_forever(self) -> None:
+        if platform.system() != "Windows" or not PYWIN32_AVAILABLE:
+            raise RuntimeError("ONyX daemon host requires Windows and pywin32.")
+        ensure_runtime_dirs()
+        self.log.info("serve_forever_start pipe=%s", self.pipe_name)
+        while True:
+            await asyncio.to_thread(self._serve_one_connection)
+
+    def _serve_one_connection(self) -> None:
+        assert win32pipe is not None
+        assert pywintypes is not None
+        pipe = win32pipe.CreateNamedPipe(
+            self.pipe_name,
+            win32pipe.PIPE_ACCESS_DUPLEX,
+            win32pipe.PIPE_TYPE_MESSAGE | win32pipe.PIPE_READMODE_MESSAGE | win32pipe.PIPE_WAIT,
+            1,
+            65536,
+            65536,
+            0,
+            None,
+        )
+        try:
+            self.log.info("pipe_waiting pipe=%s", self.pipe_name)
+            win32pipe.ConnectNamedPipe(pipe, None)
+            self.log.info("pipe_connected pipe=%s", self.pipe_name)
+            import win32file  # type: ignore
+
+            chunks: list[bytes] = []
+            while True:
+                _, data = win32file.ReadFile(pipe, 65536)
+                if not data:
+                    break
+                chunks.append(bytes(data))
+                if len(data) < 65536:
+                    break
+            if not chunks:
+                self.log.info("pipe_empty_request pipe=%s", self.pipe_name)
+                return
+            envelope = CommandEnvelope(**json.loads(b"".join(chunks).decode("utf-8")))
+            self.log.info("pipe_request command=%s request_id=%s", envelope.command, envelope.request_id)
+            response = asyncio.run(self.daemon.handle(envelope))
+            win32file.WriteFile(pipe, json.dumps(response.to_dict(), separators=(",", ":"), ensure_ascii=True).encode("utf-8"))
+            self.log.info("pipe_response command=%s request_id=%s ok=%s", envelope.command, envelope.request_id, response.ok)
+            if envelope.command == DaemonCommand.SHUTDOWN.value:
+                self.log.info("shutdown_command_received — exiting daemon process")
+                os._exit(0)
+        finally:
+            try:
+                win32pipe.DisconnectNamedPipe(pipe)
+            except Exception:
+                pass
+            self.log.info("pipe_disconnected pipe=%s", self.pipe_name)
+
+
+if PYWIN32_SERVICE_AVAILABLE:
+    class OnyxClientDaemonWindowsService(win32serviceutil.ServiceFramework):  # type: ignore[misc]
+        _svc_name_ = SERVICE_NAME
+        _svc_display_name_ = SERVICE_DISPLAY_NAME
+        _svc_description_ = SERVICE_DESCRIPTION
+
+        def __init__(self, args):
+            super().__init__(args)
+            self.stop_event = win32event.CreateEvent(None, 0, 0, None)
+
+        def SvcStop(self):
+            self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
+            win32event.SetEvent(self.stop_event)
+
+        def SvcDoRun(self):
+            servicemanager.LogInfoMsg(f"{SERVICE_DISPLAY_NAME} starting")
+            host = NamedPipeDaemonHost()
+            asyncio.run(host.serve_forever())
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="ONyX privileged client daemon skeleton")
+    parser.add_argument("--console", action="store_true", help="Run the daemon host in console mode.")
+    args, remaining = parser.parse_known_args()
+
+    if args.console or not remaining:
+        log = get_logger("daemon_host")
+        log.info("main_console_mode argv=%s", remaining)
+        if remaining:
+            log.info("main_console_mode_ignoring_extra_args argv=%s", remaining)
+        log.info("main_console_mode")
+        host = NamedPipeDaemonHost()
+        try:
+            asyncio.run(host.serve_forever())
+        except pywintypes.error as exc:  # type: ignore[union-attr]
+            if getattr(exc, "winerror", None) == 231 or (len(exc.args) >= 1 and exc.args[0] == 231):
+                log.info("main_console_mode_already_running pipe=%s", PIPE_NAME)
+                return 0
+            raise
+        return 0
+
+    if not PYWIN32_SERVICE_AVAILABLE:
+        print("pywin32 is required to run the ONyX Windows service skeleton.", file=sys.stderr)
+        return 2
+
+    get_logger("daemon_host").info("main_service_mode argv=%s", remaining)
+    win32serviceutil.HandleCommandLine(OnyxClientDaemonWindowsService, argv=[sys.argv[0], *remaining])  # type: ignore[union-attr]
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

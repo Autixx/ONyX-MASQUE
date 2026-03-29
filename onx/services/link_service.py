@@ -1,0 +1,557 @@
+from datetime import datetime, timezone
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from onx.core.config import get_settings
+from onx.core.keys import generate_wireguard_keypair
+from onx.db.models.job import Job, JobState, JobTargetType
+from onx.db.models.link import Link, LinkState
+from onx.db.models.link_endpoint import LinkEndpoint, LinkSide
+from onx.db.models.node import Node
+from onx.db.models.node_capability import NodeCapability
+from onx.db.models.node_secret import NodeSecretKind
+from onx.deploy.ssh_executor import SSHExecutor
+from onx.drivers.registry import get_driver
+from onx.schemas.links import LinkCreate, LinkUpdate
+from onx.services.interface_runtime_service import InterfaceRuntimeService
+from onx.services.node_runtime_bootstrap_service import RUNTIME_CAPABILITY_NAME
+from onx.services.secret_service import SecretService
+
+
+class LinkService:
+    def __init__(self) -> None:
+        self._settings = get_settings()
+        self._secrets = SecretService()
+        self._executor = SSHExecutor()
+        self._runtime = InterfaceRuntimeService(self._executor)
+
+    def create_link(self, db: Session, payload: LinkCreate) -> Link:
+        if payload.left_node_id == payload.right_node_id:
+            raise ValueError("left_node_id and right_node_id must be different")
+
+        existing = db.scalar(select(Link).where(Link.name == payload.name))
+        if existing is not None:
+            raise ValueError(f"Link with name '{payload.name}' already exists.")
+
+        left_node = db.get(Node, payload.left_node_id)
+        right_node = db.get(Node, payload.right_node_id)
+        if left_node is None or right_node is None:
+            raise ValueError("Both left and right nodes must exist.")
+
+        link = Link(
+            name=payload.name,
+            driver_name=payload.driver_name.value,
+            topology_type=payload.topology_type.value,
+            left_node_id=payload.left_node_id,
+            right_node_id=payload.right_node_id,
+            desired_spec_json=payload.spec.model_dump(),
+        )
+        db.add(link)
+        db.flush()
+
+        left_endpoint = LinkEndpoint(
+            link_id=link.id,
+            node_id=payload.left_node_id,
+            side=LinkSide.LEFT,
+            interface_name=payload.spec.left.interface_name,
+            listen_port=payload.spec.left.listen_port,
+            address_v4=payload.spec.left.address_v4,
+            address_v6=payload.spec.left.address_v6,
+            mtu=payload.spec.left.mtu,
+            endpoint=f"{payload.spec.left.endpoint_host}:{payload.spec.left.listen_port}",
+        )
+        right_endpoint = LinkEndpoint(
+            link_id=link.id,
+            node_id=payload.right_node_id,
+            side=LinkSide.RIGHT,
+            interface_name=payload.spec.right.interface_name,
+            listen_port=payload.spec.right.listen_port,
+            address_v4=payload.spec.right.address_v4,
+            address_v6=payload.spec.right.address_v6,
+            mtu=payload.spec.right.mtu,
+            endpoint=f"{payload.spec.right.endpoint_host}:{payload.spec.right.listen_port}",
+        )
+        db.add(left_endpoint)
+        db.add(right_endpoint)
+        db.commit()
+        db.refresh(link)
+        return link
+
+    def update_link(self, db: Session, link: Link, payload: LinkUpdate) -> Link:
+        if payload.name and payload.name != link.name:
+            existing = db.scalar(select(Link).where(Link.name == payload.name))
+            if existing is not None:
+                raise ValueError(f"Link with name '{payload.name}' already exists.")
+
+        left_node_id = payload.left_node_id or link.left_node_id
+        right_node_id = payload.right_node_id or link.right_node_id
+        if left_node_id == right_node_id:
+            raise ValueError("left_node_id and right_node_id must be different")
+
+        left_node = db.get(Node, left_node_id)
+        right_node = db.get(Node, right_node_id)
+        if left_node is None or right_node is None:
+            raise ValueError("Both left and right nodes must exist.")
+
+        left_endpoint = db.scalar(
+            select(LinkEndpoint).where(
+                LinkEndpoint.link_id == link.id,
+                LinkEndpoint.side == LinkSide.LEFT,
+            )
+        )
+        right_endpoint = db.scalar(
+            select(LinkEndpoint).where(
+                LinkEndpoint.link_id == link.id,
+                LinkEndpoint.side == LinkSide.RIGHT,
+            )
+        )
+        if left_endpoint is None or right_endpoint is None:
+            raise ValueError("Link endpoints are missing.")
+
+        changed = False
+        if payload.name is not None and payload.name != link.name:
+            link.name = payload.name
+            changed = True
+        if payload.topology_type is not None and payload.topology_type.value != link.topology_type:
+            link.topology_type = payload.topology_type.value
+            changed = True
+        if left_node_id != link.left_node_id:
+            link.left_node_id = left_node_id
+            left_endpoint.node_id = left_node_id
+            changed = True
+        if right_node_id != link.right_node_id:
+            link.right_node_id = right_node_id
+            right_endpoint.node_id = right_node_id
+            changed = True
+        if payload.spec is not None:
+            spec = payload.spec.model_dump()
+            link.desired_spec_json = spec
+
+            left_endpoint.interface_name = payload.spec.left.interface_name
+            left_endpoint.listen_port = payload.spec.left.listen_port
+            left_endpoint.address_v4 = payload.spec.left.address_v4
+            left_endpoint.address_v6 = payload.spec.left.address_v6
+            left_endpoint.mtu = payload.spec.left.mtu
+            left_endpoint.endpoint = f"{payload.spec.left.endpoint_host}:{payload.spec.left.listen_port}"
+
+            right_endpoint.interface_name = payload.spec.right.interface_name
+            right_endpoint.listen_port = payload.spec.right.listen_port
+            right_endpoint.address_v4 = payload.spec.right.address_v4
+            right_endpoint.address_v6 = payload.spec.right.address_v6
+            right_endpoint.mtu = payload.spec.right.mtu
+            right_endpoint.endpoint = f"{payload.spec.right.endpoint_host}:{payload.spec.right.listen_port}"
+            changed = True
+
+        if changed:
+            link.state = LinkState.PLANNED
+            link.applied_spec_json = None
+            link.health_summary_json = None
+            for endpoint in (left_endpoint, right_endpoint):
+                endpoint.public_key = None
+                endpoint.private_key_secret_ref = None
+                endpoint.rendered_config = None
+                endpoint.applied_state_json = None
+                db.add(endpoint)
+
+        db.add(link)
+        db.commit()
+        from onx.services.transit_policy_service import transit_policy_manager
+        transit_policy_manager.sync_for_next_hop(db, "link", link.id)
+        db.refresh(link)
+        return link
+
+    def delete_link(self, db: Session, link: Link) -> None:
+        link_id = link.id
+        active_job = db.scalar(
+            select(Job).where(
+                Job.target_type == JobTargetType.LINK,
+                Job.target_id == link.id,
+                Job.state.in_([JobState.PENDING, JobState.RUNNING]),
+            )
+        )
+        if active_job is not None:
+            raise ValueError(
+                f"Link '{link.name}' has active job '{active_job.id}' "
+                f"in state '{active_job.state.value}'."
+            )
+        # Tear down interfaces and routes on nodes if link was ever applied.
+        if link.applied_spec_json:
+            left_node = db.get(Node, link.left_node_id)
+            right_node = db.get(Node, link.right_node_id)
+            left_endpoint = db.scalar(
+                select(LinkEndpoint).where(
+                    LinkEndpoint.link_id == link.id,
+                    LinkEndpoint.side == LinkSide.LEFT,
+                )
+            )
+            right_endpoint = db.scalar(
+                select(LinkEndpoint).where(
+                    LinkEndpoint.link_id == link.id,
+                    LinkEndpoint.side == LinkSide.RIGHT,
+                )
+            )
+            _SKIP_ROUTES = {"0.0.0.0/0", "::/0"}
+            peer_spec = link.desired_spec_json.get("peer", {})
+            for node, endpoint, ips_key in (
+                (left_node, left_endpoint, "left_allowed_ips"),
+                (right_node, right_endpoint, "right_allowed_ips"),
+            ):
+                if node is None or endpoint is None:
+                    continue
+                try:
+                    secret = self._get_management_secret(db, node)
+                    self._runtime.stop_interface(node, secret, endpoint.interface_name)
+                    if link.driver_name == "awg":
+                        for cidr in peer_spec.get(ips_key, []):
+                            if cidr in _SKIP_ROUTES:
+                                continue
+                            self._executor.run(
+                                node, secret,
+                                f"ip route del {cidr} dev {endpoint.interface_name} 2>/dev/null || true",
+                            )
+                except Exception:
+                    pass
+
+        db.delete(link)
+        db.commit()
+        from onx.services.transit_policy_service import transit_policy_manager
+        transit_policy_manager.sync_for_next_hop(db, "link", link_id)
+
+    def validate_link(self, db: Session, link: Link) -> dict:
+        left_capabilities = list(
+            db.scalars(
+                select(NodeCapability).where(NodeCapability.node_id == link.left_node_id)
+            ).all()
+        )
+        right_capabilities = list(
+            db.scalars(
+                select(NodeCapability).where(NodeCapability.node_id == link.right_node_id)
+            ).all()
+        )
+
+        driver = get_driver(link.driver_name)
+        result = driver.validate(
+            link.desired_spec_json,
+            {
+                "left_capabilities": [
+                    {
+                        "capability_name": capability.capability_name,
+                        "supported": capability.supported,
+                        "details_json": capability.details_json,
+                    }
+                    for capability in left_capabilities
+                ],
+                "right_capabilities": [
+                    {
+                        "capability_name": capability.capability_name,
+                        "supported": capability.supported,
+                        "details_json": capability.details_json,
+                    }
+                    for capability in right_capabilities
+                ],
+            },
+        )
+        result["capabilities"] = {
+            "left": left_capabilities,
+            "right": right_capabilities,
+        }
+        return result
+
+    def _get_management_secret(self, db: Session, node: Node) -> str:
+        secret_kind = (
+            NodeSecretKind.SSH_PASSWORD
+            if node.auth_type.value == "password"
+            else NodeSecretKind.SSH_PRIVATE_KEY
+        )
+        secret = self._secrets.get_active_secret(db, node.id, secret_kind)
+        if secret is None:
+            raise ValueError(f"Missing active management secret for node '{node.name}'.")
+        return self._secrets.decrypt(secret.encrypted_value)
+
+    def _ensure_transport_keypair(
+        self,
+        db: Session,
+        node_id: str,
+        link_id: str,
+        side: LinkSide,
+    ) -> tuple[str, str, str]:
+        secret_ref = f"link-private:{link_id}:{side.value}"
+        existing_secret = self._secrets.get_secret_by_ref(db, secret_ref)
+        if existing_secret is not None:
+            private_key = self._secrets.decrypt(existing_secret.encrypted_value)
+            endpoint = db.scalar(
+                select(LinkEndpoint).where(
+                    LinkEndpoint.link_id == link_id,
+                    LinkEndpoint.side == side,
+                )
+            )
+            public_key = endpoint.public_key if endpoint and endpoint.public_key else ""
+            if public_key:
+                return private_key, public_key, secret_ref
+
+        private_key, public_key = generate_wireguard_keypair()
+        self._secrets.upsert_node_secret_with_ref(
+            db,
+            node_id=node_id,
+            kind=NodeSecretKind.TRANSPORT_PRIVATE_KEY,
+            secret_ref=secret_ref,
+            secret_value=private_key,
+        )
+        return private_key, public_key, secret_ref
+
+    def _assert_runtime_ready(self, db: Session, node: Node) -> None:
+        capability = db.scalar(
+            select(NodeCapability).where(
+                NodeCapability.node_id == node.id,
+                NodeCapability.capability_name == RUNTIME_CAPABILITY_NAME,
+            )
+        )
+        if capability is None or not capability.supported:
+            raise ValueError(
+                f"Runtime is not bootstrapped on node '{node.name}'. "
+                f"Run /api/v1/nodes/{node.id}/bootstrap-runtime first."
+            )
+
+        details = capability.details_json or {}
+        runtime_version = details.get("version")
+        if runtime_version != self._settings.onx_runtime_version:
+            raise ValueError(
+                f"Runtime version mismatch on node '{node.name}': "
+                f"have '{runtime_version}', expected '{self._settings.onx_runtime_version}'. "
+                f"Run bootstrap-runtime job to update assets."
+            )
+
+    def apply_link(self, db: Session, link: Link, progress_callback=None) -> dict:
+        if progress_callback:
+            progress_callback("validating link")
+        validation = self.validate_link(db, link)
+        driver = get_driver(link.driver_name)
+
+        left_node = db.get(Node, link.left_node_id)
+        right_node = db.get(Node, link.right_node_id)
+        if left_node is None or right_node is None:
+            raise ValueError("Link nodes no longer exist.")
+
+        left_endpoint = db.scalar(
+            select(LinkEndpoint).where(
+                LinkEndpoint.link_id == link.id,
+                LinkEndpoint.side == LinkSide.LEFT,
+            )
+        )
+        right_endpoint = db.scalar(
+            select(LinkEndpoint).where(
+                LinkEndpoint.link_id == link.id,
+                LinkEndpoint.side == LinkSide.RIGHT,
+            )
+        )
+        if left_endpoint is None or right_endpoint is None:
+            raise ValueError("Link endpoints are missing.")
+
+        if progress_callback:
+            progress_callback("loading management secrets")
+        left_mgmt_secret = self._get_management_secret(db, left_node)
+        right_mgmt_secret = self._get_management_secret(db, right_node)
+
+        if progress_callback:
+            progress_callback("checking interface runtime capability")
+        self._assert_runtime_ready(db, left_node)
+        self._assert_runtime_ready(db, right_node)
+
+        if progress_callback:
+            progress_callback("generating transport keypairs")
+        left_private, left_public, left_secret_ref = self._ensure_transport_keypair(
+            db, left_node.id, link.id, LinkSide.LEFT
+        )
+        right_private, right_public, right_secret_ref = self._ensure_transport_keypair(
+            db, right_node.id, link.id, LinkSide.RIGHT
+        )
+
+        if progress_callback:
+            progress_callback("rendering runtime configs")
+        runtime_configs = driver.render_runtime(
+            spec=link.desired_spec_json,
+            left_public_key=left_public,
+            right_public_key=right_public,
+        )
+        left_config = runtime_configs["left"].replace(
+            "[Interface]\n",
+            f"[Interface]\nPrivateKey = {left_private}\n",
+            1,
+        )
+        right_config = runtime_configs["right"].replace(
+            "[Interface]\n",
+            f"[Interface]\nPrivateKey = {right_private}\n",
+            1,
+        )
+
+        left_path = f"{self._settings.onx_conf_dir}/{left_endpoint.interface_name}.conf"
+        right_path = f"{self._settings.onx_conf_dir}/{right_endpoint.interface_name}.conf"
+
+        left_prev = self._executor.read_file(left_node, left_mgmt_secret, left_path)
+        right_prev = self._executor.read_file(right_node, right_mgmt_secret, right_path)
+
+        link.state = LinkState.APPLYING
+        db.add(link)
+        db.commit()
+
+        try:
+            if progress_callback:
+                progress_callback("writing left config")
+            self._executor.write_file(left_node, left_mgmt_secret, left_path, left_config)
+            if progress_callback:
+                progress_callback("writing right config")
+            self._executor.write_file(right_node, right_mgmt_secret, right_path, right_config)
+
+            for node, secret, iface in (
+                (left_node, left_mgmt_secret, left_endpoint.interface_name),
+                (right_node, right_mgmt_secret, right_endpoint.interface_name),
+            ):
+                if progress_callback:
+                    progress_callback(f"restarting onx-link@{iface} on {node.name}")
+                self._runtime.restart_interface(node, secret, iface)
+
+            self._runtime.allow_public_port(
+                left_node,
+                left_mgmt_secret,
+                port=left_endpoint.listen_port,
+                protocol="udp",
+                comment=f"onx-link-{left_endpoint.interface_name}",
+            )
+            self._runtime.allow_public_port(
+                right_node,
+                right_mgmt_secret,
+                port=right_endpoint.listen_port,
+                protocol="udp",
+                comment=f"onx-link-{right_endpoint.interface_name}",
+            )
+
+            # AWG links use Table=off so WireGuard does not add kernel routes
+            # automatically. Add explicit routes for any non-default AllowedIPs
+            # so that return traffic is routed back through the tunnel.
+            if link.driver_name == "awg":
+                _SKIP_ROUTES = {"0.0.0.0/0", "::/0"}
+                peer_spec = link.desired_spec_json.get("peer", {})
+                for node, secret, iface, ips_key in (
+                    (left_node, left_mgmt_secret, left_endpoint.interface_name, "left_allowed_ips"),
+                    (right_node, right_mgmt_secret, right_endpoint.interface_name, "right_allowed_ips"),
+                ):
+                    for cidr in peer_spec.get(ips_key, []):
+                        if cidr in _SKIP_ROUTES:
+                            continue
+                        if progress_callback:
+                            progress_callback(f"adding route {cidr} dev {iface} on {node.name}")
+                        self._executor.run(node, secret, f"ip route replace {cidr} dev {iface}")
+
+            left_peer_pub = right_public
+            if progress_callback:
+                progress_callback("verifying handshake")
+            handshake_command = (
+                f"sh -lc 'sleep 2; awg show {left_endpoint.interface_name} latest-handshakes | grep -F {left_peer_pub}'"
+            )
+            code, stdout, stderr = self._executor.run(left_node, left_mgmt_secret, handshake_command)
+            if code != 0 or len(stdout.strip()) == 0:
+                raise RuntimeError(stderr or "Handshake check failed after apply")
+
+        except Exception as exc:
+            if progress_callback:
+                progress_callback("rollback started")
+            for node, secret, iface, previous_content, path in (
+                (left_node, left_mgmt_secret, left_endpoint.interface_name, left_prev, left_path),
+                (right_node, right_mgmt_secret, right_endpoint.interface_name, right_prev, right_path),
+            ):
+                try:
+                    self._runtime.stop_interface(node, secret, iface)
+                    if previous_content is not None:
+                        self._executor.write_file(node, secret, path, previous_content)
+                        self._runtime.restart_interface(node, secret, iface)
+                except Exception:
+                    pass
+
+            link.state = LinkState.FAILED
+            db.add(link)
+            db.commit()
+            raise ValueError(str(exc)) from exc
+
+        left_endpoint.public_key = left_public
+        left_endpoint.private_key_secret_ref = left_secret_ref
+        left_endpoint.rendered_config = left_config
+        left_endpoint.applied_state_json = {
+            "config_path": left_path,
+            "validated": validation["valid"],
+        }
+        right_endpoint.public_key = right_public
+        right_endpoint.private_key_secret_ref = right_secret_ref
+        right_endpoint.rendered_config = right_config
+        right_endpoint.applied_state_json = {
+            "config_path": right_path,
+            "validated": validation["valid"],
+        }
+
+        link.applied_spec_json = {
+            "driver_name": link.driver_name,
+            "render_preview": runtime_configs,
+            "applied_at": datetime.now(timezone.utc).isoformat(),
+        }
+        link.health_summary_json = {
+            "handshake": "ok",
+            "last_apply_status": "success",
+        }
+        link.state = LinkState.ACTIVE
+
+        db.add(left_endpoint)
+        db.add(right_endpoint)
+        db.add(link)
+        db.commit()
+        from onx.services.transit_policy_service import transit_policy_manager
+        transit_policy_manager.sync_for_next_hop(db, "link", link.id)
+        db.refresh(link)
+
+        # Re-discover both nodes so discovered_gateways is up to date
+        # (tunnel interfaces appear after apply and need their peer IPs recorded).
+        from onx.services.discovery_service import DiscoveryService
+        _discovery = DiscoveryService()
+        for _node in (left_node, right_node):
+            try:
+                if progress_callback:
+                    progress_callback(f"refreshing node snapshot for {_node.name}")
+                _discovery.discover_node(db, _node)
+            except Exception:
+                pass
+
+        # Re-apply all active route policies on both nodes.
+        # Restarting a WireGuard interface causes the kernel to remove all routes
+        # that used that interface — including entries in custom policy routing
+        # tables (e.g. table 51820).  Re-applying policies here restores ip rules,
+        # routing table entries, and iptables chains so that traffic flows
+        # immediately after link apply without requiring a manual policy re-apply.
+        from onx.db.models.route_policy import RoutePolicy
+        from onx.services.route_policy_service import RoutePolicyService
+        _policy_svc = RoutePolicyService()
+        for _node in (left_node, right_node):
+            try:
+                _policies = db.scalars(
+                    select(RoutePolicy).where(
+                        RoutePolicy.node_id == _node.id,
+                        RoutePolicy.enabled.is_(True),
+                        RoutePolicy.applied_state.isnot(None),
+                    )
+                ).all()
+                for _policy in _policies:
+                    try:
+                        if progress_callback:
+                            progress_callback(
+                                f"re-applying route policy {_policy.name} on {_node.name}"
+                            )
+                        _policy_svc.apply_policy(db, _policy)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        if progress_callback:
+            progress_callback("completed")
+        return {
+            "link": link,
+            "message": "Link applied successfully",
+        }

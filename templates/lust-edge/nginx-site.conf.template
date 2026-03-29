@@ -1,0 +1,34 @@
+server {
+    listen 443 ssl http2;
+    server_name {{ server_name }};
+
+    ssl_certificate /etc/letsencrypt/live/{{ server_name }}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/{{ server_name }}/privkey.pem;
+    ssl_client_certificate /etc/onx/lust-edge/client-ca.cert.pem;
+    ssl_verify_client on;
+
+location = {{ path }} {
+    proxy_pass http://127.0.0.1:9443{{ path }};
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-SSL-Client-Verify $ssl_client_verify;
+    proxy_set_header X-SSL-Client-Fingerprint $ssl_client_fingerprint;
+    proxy_set_header X-SSL-Client-Serial $ssl_client_serial;
+}
+
+location ^~ {{ path }}/ {
+    proxy_pass http://127.0.0.1:9443;
+    proxy_http_version 1.1;
+    proxy_buffering off;
+    proxy_read_timeout 3600s;
+        proxy_set_header Host $host;
+        proxy_set_header X-SSL-Client-Verify $ssl_client_verify;
+        proxy_set_header X-SSL-Client-Fingerprint $ssl_client_fingerprint;
+        proxy_set_header X-SSL-Client-Serial $ssl_client_serial;
+        proxy_set_header Connection "";
+    }
+
+    location / {
+        return 403;
+    }
+}

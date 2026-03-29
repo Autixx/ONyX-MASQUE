@@ -1,0 +1,47 @@
+# -*- mode: python ; coding: utf-8 -*-
+import os
+HERE = os.path.dirname(os.path.abspath(SPEC))
+
+a = Analysis(
+    [os.path.join(HERE, 'onyx_daemon_service.py')],
+    pathex=[HERE],
+    binaries=[],
+    datas=[
+        (os.path.join(HERE, 'bin'), 'bin'),
+    ],
+    hiddenimports=[
+        'runtime',
+        'runtime.ipc',
+        'runtime.models',
+        'runtime.paths',
+        'runtime.service',
+        'runtime.adapters',
+    ],
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
+    excludes=[],
+    noarchive=False,
+    optimize=0,
+)
+pyz = PYZ(a.pure)
+
+exe = EXE(
+    pyz,
+    a.scripts,
+    a.binaries,
+    a.datas,
+    [],
+    name='ONyXClientDaemon',
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=True,
+    console=False,
+    disable_windowed_traceback=False,
+    argv_emulation=False,
+    target_arch=None,
+    codesign_identity=None,
+    entitlements_file=None,
+    icon=[os.path.join(HERE, 'assets', 'icons', 'onyx.ico')],
+)

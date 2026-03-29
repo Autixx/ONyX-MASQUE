@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd:*)",
+      "Bash(ls -la /q/ONyX_export/apps/client-desktop/*.spec)"
+    ]
+  }
+}

@@ -1,0 +1,222 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SERVICE_NAME="${SERVICE_NAME:-onx-api}"
+CONFIG_DIR="${CONFIG_DIR:-/etc/onx}"
+ENV_FILE_NAME="${ENV_FILE_NAME:-onx.env}"
+AUTH_INFO_FILE_NAME="${AUTH_INFO_FILE_NAME:-client-auth.txt}"
+VENV_DIR_NAME="${VENV_DIR_NAME:-.venv-onx}"
+CLIENT_API_AUTH_MODE="${CLIENT_API_AUTH_MODE:-}"
+CLIENT_API_TOKENS="${CLIENT_API_TOKENS:-}"
+CLIENT_API_JWT_SECRET="${CLIENT_API_JWT_SECRET:-}"
+CLIENT_API_JWT_ISSUER="${CLIENT_API_JWT_ISSUER:-}"
+CLIENT_API_JWT_AUDIENCE="${CLIENT_API_JWT_AUDIENCE:-}"
+
+usage() {
+  cat <<'EOF'
+Usage: sudo bash scripts/rotate_onx_auth.sh [options]
+
+Options:
+  --service-name <name>         systemd service name (default: onx-api)
+  --config-dir <path>           ONX config directory (default: /etc/onx)
+  --env-file-name <name>        env filename in config dir (default: onx.env)
+  --auth-info-file-name <name>  generated auth info filename (default: client-auth.txt)
+  --client-auth-mode <mode>     disabled | token | jwt | token_or_jwt
+  --client-api-tokens <csv>     new static bearer token list
+  --client-api-jwt-secret <v>   new HS256 JWT secret
+  --client-api-jwt-issuer <v>   JWT issuer to write into env
+  --client-api-jwt-audience <v> JWT audience to write into env
+  -h, --help                    Show help
+EOF
+}
+
+fail() {
+  echo "$*" >&2
+  exit 1
+}
+
+upsert_env() {
+  local file="$1"
+  local key="$2"
+  local value="$3"
+  python3 - "${file}" "${key}" "${value}" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+key = sys.argv[2]
+value = sys.argv[3]
+
+lines = path.read_text(encoding="utf-8").splitlines()
+prefix = f"{key}="
+replaced = False
+output = []
+for line in lines:
+    if line.startswith(prefix):
+        output.append(f"{key}={value}")
+        replaced = True
+    else:
+        output.append(line)
+if not replaced:
+    output.append(f"{key}={value}")
+path.write_text("\n".join(output) + "\n", encoding="utf-8")
+PY
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --service-name)
+      SERVICE_NAME="$2"
+      shift 2
+      ;;
+    --config-dir)
+      CONFIG_DIR="$2"
+      shift 2
+      ;;
+    --env-file-name)
+      ENV_FILE_NAME="$2"
+      shift 2
+      ;;
+    --auth-info-file-name)
+      AUTH_INFO_FILE_NAME="$2"
+      shift 2
+      ;;
+    --client-auth-mode)
+      CLIENT_API_AUTH_MODE="$2"
+      shift 2
+      ;;
+    --client-api-tokens)
+      CLIENT_API_TOKENS="$2"
+      shift 2
+      ;;
+    --client-api-jwt-secret)
+      CLIENT_API_JWT_SECRET="$2"
+      shift 2
+      ;;
+    --client-api-jwt-issuer)
+      CLIENT_API_JWT_ISSUER="$2"
+      shift 2
+      ;;
+    --client-api-jwt-audience)
+      CLIENT_API_JWT_AUDIENCE="$2"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      fail "Unknown argument: $1"
+      ;;
+  esac
+done
+
+if [[ "${EUID}" -ne 0 ]]; then
+  fail "Run as root: sudo bash $0"
+fi
+
+ENV_FILE_PATH="${CONFIG_DIR}/${ENV_FILE_NAME}"
+AUTH_INFO_PATH="${CONFIG_DIR}/${AUTH_INFO_FILE_NAME}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+PYTHON_BIN="${REPO_ROOT}/${VENV_DIR_NAME}/bin/python3"
+
+[[ -f "${ENV_FILE_PATH}" ]] || fail "ONX env file not found: ${ENV_FILE_PATH}"
+if [[ ! -x "${PYTHON_BIN}" ]]; then
+  PYTHON_BIN="python3"
+fi
+
+current_mode="$(grep '^ONX_CLIENT_API_AUTH_MODE=' "${ENV_FILE_PATH}" | sed 's/^ONX_CLIENT_API_AUTH_MODE=//' || true)"
+current_issuer="$(grep '^ONX_CLIENT_API_JWT_ISSUER=' "${ENV_FILE_PATH}" | sed 's/^ONX_CLIENT_API_JWT_ISSUER=//' || true)"
+current_audience="$(grep '^ONX_CLIENT_API_JWT_AUDIENCE=' "${ENV_FILE_PATH}" | sed 's/^ONX_CLIENT_API_JWT_AUDIENCE=//' || true)"
+
+if [[ -z "${CLIENT_API_AUTH_MODE}" ]]; then
+  CLIENT_API_AUTH_MODE="${current_mode:-token}"
+fi
+
+case "${CLIENT_API_AUTH_MODE}" in
+  disabled|token|jwt|token_or_jwt) ;;
+  *) fail "client-auth-mode must be one of: disabled, token, jwt, token_or_jwt" ;;
+esac
+
+if [[ -z "${CLIENT_API_JWT_ISSUER}" ]]; then
+  CLIENT_API_JWT_ISSUER="${current_issuer:-onyx-control}"
+fi
+if [[ -z "${CLIENT_API_JWT_AUDIENCE}" ]]; then
+  CLIENT_API_JWT_AUDIENCE="${current_audience:-onyx-client}"
+fi
+
+if [[ "${CLIENT_API_AUTH_MODE}" == "token" || "${CLIENT_API_AUTH_MODE}" == "token_or_jwt" ]]; then
+  if [[ -z "${CLIENT_API_TOKENS}" ]]; then
+    CLIENT_API_TOKENS="onx-$(openssl rand -hex 24)"
+  fi
+else
+  CLIENT_API_TOKENS=""
+fi
+
+if [[ "${CLIENT_API_AUTH_MODE}" == "jwt" || "${CLIENT_API_AUTH_MODE}" == "token_or_jwt" ]]; then
+  if [[ -z "${CLIENT_API_JWT_SECRET}" ]]; then
+    CLIENT_API_JWT_SECRET="$(openssl rand -hex 32)"
+  fi
+else
+  CLIENT_API_JWT_SECRET=""
+fi
+
+upsert_env "${ENV_FILE_PATH}" "ONX_CLIENT_API_AUTH_MODE" "${CLIENT_API_AUTH_MODE}"
+upsert_env "${ENV_FILE_PATH}" "ONX_CLIENT_API_TOKENS" "${CLIENT_API_TOKENS}"
+upsert_env "${ENV_FILE_PATH}" "ONX_CLIENT_API_JWT_SECRET" "${CLIENT_API_JWT_SECRET}"
+upsert_env "${ENV_FILE_PATH}" "ONX_CLIENT_API_JWT_ISSUER" "${CLIENT_API_JWT_ISSUER}"
+upsert_env "${ENV_FILE_PATH}" "ONX_CLIENT_API_JWT_AUDIENCE" "${CLIENT_API_JWT_AUDIENCE}"
+chmod 600 "${ENV_FILE_PATH}"
+
+{
+  echo "# Generated by rotate_onx_auth.sh"
+  echo "mode=${CLIENT_API_AUTH_MODE}"
+  if [[ -n "${CLIENT_API_TOKENS}" ]]; then
+    CLIENT_PRIMARY_TOKEN="${CLIENT_API_TOKENS%%,*}"
+    echo "tokens=${CLIENT_API_TOKENS}"
+    echo "primary_token=${CLIENT_PRIMARY_TOKEN}"
+  fi
+  if [[ -n "${CLIENT_API_JWT_SECRET}" ]]; then
+    echo "jwt_secret=${CLIENT_API_JWT_SECRET}"
+  fi
+  if [[ -n "${CLIENT_API_JWT_ISSUER}" ]]; then
+    echo "jwt_issuer=${CLIENT_API_JWT_ISSUER}"
+  fi
+  if [[ -n "${CLIENT_API_JWT_AUDIENCE}" ]]; then
+    echo "jwt_audience=${CLIENT_API_JWT_AUDIENCE}"
+  fi
+} > "${AUTH_INFO_PATH}"
+chmod 600 "${AUTH_INFO_PATH}"
+
+DETAILS_JSON="$("${PYTHON_BIN}" - "${current_mode:-}" "${CLIENT_API_AUTH_MODE}" "${CLIENT_API_TOKENS}" "${CLIENT_API_JWT_SECRET}" "${CLIENT_API_JWT_ISSUER}" "${CLIENT_API_JWT_AUDIENCE}" <<'PY'
+import json
+import sys
+
+previous_mode, new_mode, tokens, jwt_secret, issuer, audience = sys.argv[1:]
+print(json.dumps({
+    "scope": "client",
+    "previous_mode": previous_mode or None,
+    "new_mode": new_mode,
+    "static_tokens_configured": bool(tokens),
+    "jwt_secret_configured": bool(jwt_secret),
+    "jwt_issuer": issuer or None,
+    "jwt_audience": audience or None,
+}))
+PY
+)"
+"${PYTHON_BIN}" "${REPO_ROOT}/scripts/onx_audit_event.py" \
+  --env-file "${ENV_FILE_PATH}" \
+  --entity-type "auth_rotation" \
+  --entity-id "client" \
+  --message "Client-routing auth rotated." \
+  --level info \
+  --details-json "${DETAILS_JSON}" >/dev/null 2>&1 || echo "Warning: failed to write client auth audit event." >&2
+
+systemctl restart "${SERVICE_NAME}.service"
+
+echo "ONX auth rotated."
+echo "Mode:     ${CLIENT_API_AUTH_MODE}"
+echo "Env file: ${ENV_FILE_PATH}"
+echo "Auth:     ${AUTH_INFO_PATH}"
+echo "Status:   systemctl status ${SERVICE_NAME}.service --no-pager"
