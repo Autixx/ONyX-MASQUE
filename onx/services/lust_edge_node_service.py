@@ -157,12 +157,21 @@ class LustEdgeNodeService:
             management_secret,
             f"\"{paths['venv_dir']}/bin/python\" - <<\"PY\"\n"
             "import json\n"
+            "import time\n"
             "import urllib.request\n"
-            "with urllib.request.urlopen(\"http://127.0.0.1:9443/health\", timeout=10) as resp:\n"
-            "    payload = json.loads(resp.read().decode(\"utf-8\"))\n"
-            "    if payload.get(\"status\") != \"ok\":\n"
-            "        raise SystemExit(json.dumps(payload))\n"
-            "    print(json.dumps(payload))\n"
+            "last_error = None\n"
+            "for _ in range(30):\n"
+            "    try:\n"
+            "        with urllib.request.urlopen(\"http://127.0.0.1:9443/health\", timeout=10) as resp:\n"
+            "            payload = json.loads(resp.read().decode(\"utf-8\"))\n"
+            "            if payload.get(\"status\") != \"ok\":\n"
+            "                raise SystemExit(json.dumps(payload))\n"
+            "            print(json.dumps(payload))\n"
+            "            raise SystemExit(0)\n"
+            "    except Exception as exc:\n"
+            "        last_error = exc\n"
+            "        time.sleep(2)\n"
+            "raise SystemExit(str(last_error) if last_error is not None else 'health check failed')\n"
             "PY\n",
             timeout_seconds=180,
         )
