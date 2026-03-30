@@ -17,6 +17,8 @@ depends_on = None
 
 
 def _job_target_type_labels(bind) -> set[str]:
+    if bind.dialect.name != "postgresql":
+        return set()
     rows = bind.execute(
         sa.text(
             """
@@ -32,17 +34,18 @@ def _job_target_type_labels(bind) -> set[str]:
 
 def upgrade() -> None:
     bind = op.get_bind()
-    labels = _job_target_type_labels(bind)
-    for label in (
-        "AWG_SERVICE",
-        "WG_SERVICE",
-        "XRAY_SERVICE",
-        "OPENVPN_CLOAK_SERVICE",
-        "TRANSIT_POLICY",
-    ):
-        if label not in labels:
-            op.execute(f"ALTER TYPE job_target_type ADD VALUE '{label}'")
-            labels.add(label)
+    if bind.dialect.name == "postgresql":
+        labels = _job_target_type_labels(bind)
+        for label in (
+            "AWG_SERVICE",
+            "WG_SERVICE",
+            "XRAY_SERVICE",
+            "OPENVPN_CLOAK_SERVICE",
+            "TRANSIT_POLICY",
+        ):
+            if label not in labels:
+                op.execute(f"ALTER TYPE job_target_type ADD VALUE '{label}'")
+                labels.add(label)
 
     op.create_table(
         "quick_deploy_sessions",

@@ -16,6 +16,7 @@ depends_on = None
 
 
 def upgrade() -> None:
+    bind = op.get_bind()
     op.create_table(
         "lust_services",
         sa.Column("id", sa.String(length=36), nullable=False),
@@ -45,44 +46,85 @@ def upgrade() -> None:
     op.create_index(op.f("ix_lust_services_node_id"), "lust_services", ["node_id"], unique=False)
     op.create_index(op.f("ix_lust_services_state"), "lust_services", ["state"], unique=False)
 
-    op.add_column("transport_packages", sa.Column("preferred_lust_service_id", sa.String(length=36), nullable=True))
-    op.add_column("transport_packages", sa.Column("lust_enabled", sa.Boolean(), nullable=False, server_default=sa.true()))
-    op.create_foreign_key(
-        "fk_transport_packages_preferred_lust_service_id",
-        "transport_packages",
-        "lust_services",
-        ["preferred_lust_service_id"],
-        ["id"],
-        ondelete="SET NULL",
-    )
-    op.create_index(
-        op.f("ix_transport_packages_preferred_lust_service_id"),
-        "transport_packages",
-        ["preferred_lust_service_id"],
-        unique=False,
-    )
+    if bind.dialect.name == "sqlite":
+        with op.batch_alter_table("transport_packages") as batch_op:
+            batch_op.add_column(sa.Column("preferred_lust_service_id", sa.String(length=36), nullable=True))
+            batch_op.add_column(sa.Column("lust_enabled", sa.Boolean(), nullable=False, server_default=sa.true()))
+            batch_op.create_foreign_key(
+                "fk_transport_packages_preferred_lust_service_id",
+                "lust_services",
+                ["preferred_lust_service_id"],
+                ["id"],
+                ondelete="SET NULL",
+            )
+            batch_op.create_index(
+                op.f("ix_transport_packages_preferred_lust_service_id"),
+                ["preferred_lust_service_id"],
+                unique=False,
+            )
 
-    op.add_column("peers", sa.Column("lust_service_id", sa.String(length=36), nullable=True))
-    op.create_foreign_key(
-        "fk_peers_lust_service_id",
-        "peers",
-        "lust_services",
-        ["lust_service_id"],
-        ["id"],
-        ondelete="SET NULL",
-    )
-    op.create_index(op.f("ix_peers_lust_service_id"), "peers", ["lust_service_id"], unique=False)
+        with op.batch_alter_table("peers") as batch_op:
+            batch_op.add_column(sa.Column("lust_service_id", sa.String(length=36), nullable=True))
+            batch_op.create_foreign_key(
+                "fk_peers_lust_service_id",
+                "lust_services",
+                ["lust_service_id"],
+                ["id"],
+                ondelete="SET NULL",
+            )
+            batch_op.create_index(op.f("ix_peers_lust_service_id"), ["lust_service_id"], unique=False)
+    else:
+        op.add_column("transport_packages", sa.Column("preferred_lust_service_id", sa.String(length=36), nullable=True))
+        op.add_column("transport_packages", sa.Column("lust_enabled", sa.Boolean(), nullable=False, server_default=sa.true()))
+        op.create_foreign_key(
+            "fk_transport_packages_preferred_lust_service_id",
+            "transport_packages",
+            "lust_services",
+            ["preferred_lust_service_id"],
+            ["id"],
+            ondelete="SET NULL",
+        )
+        op.create_index(
+            op.f("ix_transport_packages_preferred_lust_service_id"),
+            "transport_packages",
+            ["preferred_lust_service_id"],
+            unique=False,
+        )
+
+        op.add_column("peers", sa.Column("lust_service_id", sa.String(length=36), nullable=True))
+        op.create_foreign_key(
+            "fk_peers_lust_service_id",
+            "peers",
+            "lust_services",
+            ["lust_service_id"],
+            ["id"],
+            ondelete="SET NULL",
+        )
+        op.create_index(op.f("ix_peers_lust_service_id"), "peers", ["lust_service_id"], unique=False)
 
 
 def downgrade() -> None:
-    op.drop_index(op.f("ix_peers_lust_service_id"), table_name="peers")
-    op.drop_constraint("fk_peers_lust_service_id", "peers", type_="foreignkey")
-    op.drop_column("peers", "lust_service_id")
+    bind = op.get_bind()
+    if bind.dialect.name == "sqlite":
+        with op.batch_alter_table("peers") as batch_op:
+            batch_op.drop_index(op.f("ix_peers_lust_service_id"))
+            batch_op.drop_constraint("fk_peers_lust_service_id", type_="foreignkey")
+            batch_op.drop_column("lust_service_id")
 
-    op.drop_index(op.f("ix_transport_packages_preferred_lust_service_id"), table_name="transport_packages")
-    op.drop_constraint("fk_transport_packages_preferred_lust_service_id", "transport_packages", type_="foreignkey")
-    op.drop_column("transport_packages", "lust_enabled")
-    op.drop_column("transport_packages", "preferred_lust_service_id")
+        with op.batch_alter_table("transport_packages") as batch_op:
+            batch_op.drop_index(op.f("ix_transport_packages_preferred_lust_service_id"))
+            batch_op.drop_constraint("fk_transport_packages_preferred_lust_service_id", type_="foreignkey")
+            batch_op.drop_column("lust_enabled")
+            batch_op.drop_column("preferred_lust_service_id")
+    else:
+        op.drop_index(op.f("ix_peers_lust_service_id"), table_name="peers")
+        op.drop_constraint("fk_peers_lust_service_id", "peers", type_="foreignkey")
+        op.drop_column("peers", "lust_service_id")
+
+        op.drop_index(op.f("ix_transport_packages_preferred_lust_service_id"), table_name="transport_packages")
+        op.drop_constraint("fk_transport_packages_preferred_lust_service_id", "transport_packages", type_="foreignkey")
+        op.drop_column("transport_packages", "lust_enabled")
+        op.drop_column("transport_packages", "preferred_lust_service_id")
 
     op.drop_index(op.f("ix_lust_services_state"), table_name="lust_services")
     op.drop_index(op.f("ix_lust_services_node_id"), table_name="lust_services")

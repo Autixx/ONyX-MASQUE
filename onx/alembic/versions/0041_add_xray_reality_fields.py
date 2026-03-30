@@ -24,7 +24,9 @@ def upgrade() -> None:
     op.add_column("xray_services", sa.Column("reality_short_id", sa.String(length=32), nullable=True))
     op.add_column("xray_services", sa.Column("reality_fingerprint", sa.String(length=64), nullable=True))
     op.add_column("xray_services", sa.Column("reality_spider_x", sa.String(length=255), nullable=True))
-    op.alter_column("xray_services", "reality_enabled", server_default=None)
+    bind = op.get_bind()
+    if bind.dialect.name != "sqlite":
+        op.alter_column("xray_services", "reality_enabled", server_default=None)
 
 
 def downgrade() -> None:
