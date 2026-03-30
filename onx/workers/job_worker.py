@@ -9,6 +9,7 @@ from sqlalchemy import select
 from onx.core.config import get_settings
 from onx.db.models.job import Job, JobKind, JobState, JobTargetType
 from onx.db.models.link import Link
+from onx.db.models.lust_service import LustService
 from onx.db.models.node import Node
 from onx.db.models.node_capability import NodeCapability
 from onx.db.models.openvpn_cloak_service import OpenVpnCloakService
@@ -32,6 +33,7 @@ from onx.services.discovery_service import DiscoveryService
 from onx.services.interface_runtime_service import InterfaceRuntimeService
 from onx.services.job_service import JobCancelledError, JobService
 from onx.services.link_service import LinkService
+from onx.services.lust_service_service import lust_service_manager
 from onx.services.agh_install_service import AghInstallService
 from onx.services.node_runtime_bootstrap_service import NodeRuntimeBootstrapService
 from onx.services.openvpn_cloak_service_service import openvpn_cloak_service_manager
@@ -290,6 +292,26 @@ class JobWorker:
                     "policy": TransitPolicyRead.model_validate(result["policy"]).model_dump(mode="json"),
                     "config_path": result["config_path"],
                     "chain_name": result["chain_name"],
+                },
+            )
+            return
+
+        if job.target_type == JobTargetType.LUST_SERVICE:
+            service = db.get(LustService, job.target_id)
+            if service is None:
+                raise ValueError("Target LuST service not found.")
+            applied_service = lust_service_manager.apply_service(
+                db,
+                service,
+                progress_callback=lambda step: self._progress(db, job, step),
+            )
+            self._jobs.succeed(
+                db,
+                job,
+                {
+                    "service": lust_service_manager.serialize_service(db, applied_service),
+                    "health": applied_service.health_summary_json,
+                    "applied_at": datetime.now(timezone.utc).isoformat(),
                 },
             )
             return

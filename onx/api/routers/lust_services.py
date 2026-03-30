@@ -1,15 +1,19 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Body, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from onx.api.deps import get_database_session
+from onx.db.models.job import JobKind, JobTargetType
+from onx.schemas.jobs import JobEnqueueOptions, JobRead
 from onx.schemas.lust_services import LustServiceCreate, LustServiceRead, LustServiceUpdate
 from onx.services.lust_edge_deploy_service import lust_edge_deploy_service
 from onx.services.lust_edge_node_service import lust_edge_node_service
+from onx.services.job_service import JobConflictError, JobService
 from onx.services.realtime_service import realtime_service
 from onx.services.lust_service_service import lust_service_manager
 
 
 router = APIRouter(prefix="/lust-services", tags=["lust-services"])
+job_service = JobService()
 
 
 @router.get("", response_model=list[LustServiceRead], status_code=status.HTTP_200_OK)
@@ -73,17 +77,44 @@ def delete_lust_service(service_id: str, db: Session = Depends(get_database_sess
     realtime_service.publish("lust_service.deleted", {"id": service_id, "name": service_name, "node_id": service_node_id})
 
 
-@router.post("/{service_id}/apply", response_model=LustServiceRead, status_code=status.HTTP_200_OK)
-def apply_lust_service(service_id: str, db: Session = Depends(get_database_session)):
+@router.post("/{service_id}/apply", response_model=JobRead, status_code=status.HTTP_202_ACCEPTED)
+def apply_lust_service(
+    service_id: str,
+    options: JobEnqueueOptions | None = Body(default=None),
+    db: Session = Depends(get_database_session),
+):
     service = lust_service_manager.get_service(db, service_id)
     if service is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="LuST service not found.")
     try:
-        service = lust_service_manager.apply_service(db, service)
+        job = job_service.create_job(
+            db,
+            kind=JobKind.APPLY,
+            target_type=JobTargetType.LUST_SERVICE,
+            target_id=service.id,
+            request_payload={
+                "service_id": service.id,
+                "service_name": service.name,
+                "node_id": service.node_id,
+                "public_host": service.public_host,
+                "public_port": service.public_port or service.listen_port,
+            },
+            max_attempts=options.max_attempts if options else 1,
+            retry_delay_seconds=options.retry_delay_seconds if options else 300,
+        )
+    except JobConflictError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": str(exc),
+                "existing_job_id": exc.job_id,
+                "existing_job_state": exc.job_state,
+            },
+        ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    realtime_service.publish("lust_service.applied", {"id": service.id, "name": service.name, "node_id": service.node_id})
-    return lust_service_manager.serialize_service(db, service)
+    realtime_service.publish("lust_service.apply_queued", {"id": service.id, "name": service.name, "node_id": service.node_id, "job_id": job.id})
+    return job
 
 
 @router.post("/{service_id}/deploy", status_code=status.HTTP_200_OK)

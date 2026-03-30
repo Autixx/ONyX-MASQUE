@@ -50,7 +50,7 @@ class LustServiceManager:
         db.delete(service)
         db.commit()
 
-    def apply_service(self, db: Session, service: LustService) -> LustService:
+    def apply_service(self, db: Session, service: LustService, *, progress_callback=None) -> LustService:
         if not service.public_host.strip():
             raise ValueError("LuST service public_host is required.")
         service.desired_config_json = lust_edge_deploy_service.build_service_deployment(db, service)
@@ -68,7 +68,7 @@ class LustServiceManager:
         db.commit()
         from onx.services.lust_edge_node_service import lust_edge_node_service
         try:
-            lust_edge_node_service.deploy_service(db, service)
+            lust_edge_node_service.deploy_service(db, service, progress_callback=progress_callback)
         except Exception as exc:
             service.state = "failed"
             service.last_error_text = str(exc)

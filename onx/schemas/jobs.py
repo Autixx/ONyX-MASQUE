@@ -28,6 +28,7 @@ class JobTargetTypeValue(StrEnum):
     XRAY_SERVICE = "xray_service"
     OPENVPN_CLOAK_SERVICE = "openvpn_cloak_service"
     TRANSIT_POLICY = "transit_policy"
+    LUST_SERVICE = "lust_service"
 
 
 class JobStateValue(StrEnum):

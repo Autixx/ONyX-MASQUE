@@ -18,11 +18,15 @@ class LustEdgeNodeService:
         self._ssh = ssh_executor or SSHExecutor()
         self._secrets = SecretService()
 
-    def deploy_service(self, db: Session, service: LustService) -> dict:
+    def deploy_service(self, db: Session, service: LustService, progress_callback=None) -> dict:
         node = db.get(Node, service.node_id)
         if node is None:
             raise ValueError("Node not found.")
+        if progress_callback:
+            progress_callback("resolving management secret")
         management_secret = self._get_management_secret(db, node)
+        if progress_callback:
+            progress_callback("building deployment payload")
         payload = lust_edge_deploy_service.build_service_deployment(db, service)
         paths = dict(payload.get("paths") or {})
         files = dict(payload.get("files") or {})
@@ -38,45 +42,119 @@ class LustEdgeNodeService:
             "/etc/nginx/sites-available",
             "/etc/nginx/sites-enabled",
         }
-        self._run(
+        if progress_callback:
+            progress_callback("preparing remote directories")
+        self._run_checked(
             node,
             management_secret,
             "mkdir -p " + " ".join(shlex.quote(item) for item in sorted(remote_dirs)),
+            step="create remote directories",
         )
 
+        if progress_callback:
+            progress_callback("uploading edge application")
         self._install_file(node, management_secret, paths["app_py"], files["onx_lust_edge.py"], mode="0755")
+        if progress_callback:
+            progress_callback("uploading node installer")
         self._install_file(node, management_secret, paths["install_script"], files["install-edge.sh"], mode="0755")
+        if progress_callback:
+            progress_callback("uploading edge configuration")
         self._install_file(node, management_secret, paths["config_json"], files["config.json"], mode="0600")
+        if progress_callback:
+            progress_callback("uploading nginx configuration")
         self._install_file(node, management_secret, paths["nginx_site"], files["nginx.conf"], mode="0644")
+        if progress_callback:
+            progress_callback("uploading systemd unit")
         self._install_file(node, management_secret, paths["systemd_unit"], files["onx-lust-edge.service"], mode="0644")
+        if progress_callback:
+            progress_callback("uploading cert renewal hook")
         self._install_file(node, management_secret, paths["renew_hook"], files["renew-nginx.sh"], mode="0755")
+        if progress_callback:
+            progress_callback("uploading trust material")
         for path, content in secret_files.items():
             self._install_file(node, management_secret, path, content.strip() + "\n", mode="0600")
 
-        certbot_command = ""
+        stdout_parts: list[str] = []
+        if progress_callback:
+            progress_callback("installing node packages")
+        code, stdout, stderr = self._run(
+            node,
+            management_secret,
+            shlex.quote(paths["install_script"]),
+            timeout_seconds=300,
+        )
+        if code != 0:
+            raise RuntimeError(f"install node packages failed: {stderr or stdout or 'unknown error'}")
+        if stdout.strip():
+            stdout_parts.append(stdout.strip())
+
         if acme.get("enabled"):
             server_name = str(acme.get("server_name") or "").strip()
             if not server_name:
                 raise ValueError("LuST ACME server_name is required for TLS deployment.")
             email = str(acme.get("email") or "").strip()
             email_arg = f"--email {shlex.quote(email)}" if email else "--register-unsafely-without-email"
-            certbot_command = (
+            if progress_callback:
+                progress_callback(f"issuing letsencrypt certificate for {server_name}")
+            code, stdout, stderr = self._run(
+                node,
+                management_secret,
                 "systemctl stop nginx >/dev/null 2>&1 || true; "
                 "certbot certonly --standalone --non-interactive --agree-tos --keep-until-expiring "
-                f"--preferred-challenges http -d {shlex.quote(server_name)} {email_arg} && "
+                f"--preferred-challenges http -d {shlex.quote(server_name)} {email_arg}",
+                timeout_seconds=600,
             )
+            if code != 0:
+                raise RuntimeError(
+                    f"issue letsencrypt certificate for {server_name} failed: {stderr or stdout or 'unknown error'}"
+                )
+            if stdout.strip():
+                stdout_parts.append(stdout.strip())
 
-        command = (
-            f"{shlex.quote(paths['install_script'])} && "
-            f"{certbot_command}"
-            f"ln -sfn {shlex.quote(paths['nginx_site'])} {shlex.quote(paths['nginx_site_enabled'])} && "
-            "rm -f /etc/nginx/sites-enabled/default >/dev/null 2>&1 || true; "
-            "systemctl daemon-reload && "
-            "systemctl enable --now nginx && "
-            "systemctl enable --now onx-lust-edge.service && "
-            "systemctl restart onx-lust-edge.service && "
-            "nginx -t && "
-            "systemctl reload nginx && "
+        if progress_callback:
+            progress_callback("enabling nginx site")
+        self._run_checked(
+            node,
+            management_secret,
+            f"ln -sfn {shlex.quote(paths['nginx_site'])} {shlex.quote(paths['nginx_site_enabled'])}",
+            step="enable nginx site",
+        )
+        self._run_checked(
+            node,
+            management_secret,
+            "rm -f /etc/nginx/sites-enabled/default >/dev/null 2>&1 || true",
+            step="disable default nginx site",
+        )
+        if progress_callback:
+            progress_callback("reloading systemd")
+        self._run_checked(node, management_secret, "systemctl daemon-reload", step="reload systemd")
+        if progress_callback:
+            progress_callback("starting lust edge service")
+        self._run_checked(
+            node,
+            management_secret,
+            "systemctl enable --now onx-lust-edge.service && systemctl restart onx-lust-edge.service",
+            step="start lust edge service",
+            timeout_seconds=180,
+        )
+        if progress_callback:
+            progress_callback("validating nginx configuration")
+        self._run_checked(node, management_secret, "nginx -t", step="validate nginx configuration")
+        if progress_callback:
+            progress_callback("starting nginx")
+        self._run_checked(
+            node,
+            management_secret,
+            "systemctl enable --now nginx && systemctl reload nginx",
+            step="start nginx",
+            timeout_seconds=180,
+        )
+
+        if progress_callback:
+            progress_callback("running local health check")
+        code, stdout, stderr = self._run(
+            node,
+            management_secret,
             f"\"{paths['venv_dir']}/bin/python\" - <<\"PY\"\n"
             "import json\n"
             "import urllib.request\n"
@@ -85,11 +163,13 @@ class LustEdgeNodeService:
             "    if payload.get(\"status\") != \"ok\":\n"
             "        raise SystemExit(json.dumps(payload))\n"
             "    print(json.dumps(payload))\n"
-            "PY\n"
+            "PY\n",
+            timeout_seconds=180,
         )
-        code, stdout, stderr = self._run(node, management_secret, command, timeout_seconds=180)
         if code != 0:
-            raise RuntimeError(stderr or stdout or f"Failed to deploy LuST edge to node '{node.name}'.")
+            raise RuntimeError(f"run local health check failed: {stderr or stdout or f'node {node.name} health check failed'}")
+        if stdout.strip():
+            stdout_parts.append(stdout.strip())
 
         applied_at = datetime.now(timezone.utc)
         service.state = "active"
@@ -114,7 +194,7 @@ class LustEdgeNodeService:
             "service_name": service.name,
             "paths": paths,
             "health": service.health_summary_json,
-            "stdout": stdout,
+            "stdout": "\n\n".join(stdout_parts),
         }
 
     def _get_management_secret(self, db: Session, node: Node) -> str:
@@ -144,6 +224,20 @@ class LustEdgeNodeService:
             self._remote_shell(node, command),
             timeout_seconds=timeout_seconds,
         )
+
+    def _run_checked(
+        self,
+        node: Node,
+        management_secret: str,
+        command: str,
+        *,
+        step: str,
+        timeout_seconds: int = 60,
+    ) -> tuple[str, str]:
+        code, stdout, stderr = self._run(node, management_secret, command, timeout_seconds=timeout_seconds)
+        if code != 0:
+            raise RuntimeError(f"{step} failed: {stderr or stdout or 'unknown error'}")
+        return stdout, stderr
 
     def _install_file(self, node: Node, management_secret: str, destination: str, content: str, *, mode: str) -> None:
         temp_path = f"/tmp/onx-lust-{abs(hash(destination)) & 0xFFFFFFFF:x}"

@@ -119,7 +119,8 @@ window.deleteLustServiceFlow = async function deleteLustServiceFlow(serviceId){
 
 window.applyLustServiceFlow = async function applyLustServiceFlow(serviceId){
   try{
-    await apiFetch(API_PREFIX + '/lust-services/' + encodeURIComponent(serviceId) + '/apply', { method:'POST', body:{} });
+    var job = await apiFetch(API_PREFIX + '/lust-services/' + encodeURIComponent(serviceId) + '/apply', { method:'POST', body:{} });
+    pushEv('job.created', 'LuST apply queued [' + (job && job.id ? job.id : '?') + ']');
     await refreshLustServices();
     await loadPeers?.();
     var service = lustServiceById(serviceId);
