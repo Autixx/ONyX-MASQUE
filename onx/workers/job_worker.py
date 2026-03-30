@@ -30,6 +30,7 @@ from onx.schemas.wg_services import WgServiceRead
 from onx.schemas.xray_services import XrayServiceRead
 from onx.services.awg_service_service import awg_service_manager
 from onx.services.discovery_service import DiscoveryService
+from onx.services.lust_service_service import lust_service_manager
 from onx.services.interface_runtime_service import InterfaceRuntimeService
 from onx.services.job_service import JobCancelledError, JobService
 from onx.services.link_service import LinkService
@@ -349,6 +350,21 @@ class JobWorker:
                     "message": result["message"],
                     "applied_at": datetime.now(timezone.utc).isoformat(),
                 },
+            )
+            return
+
+        if job.target_type == JobTargetType.LUST_SERVICE:
+            service = db.get(LustService, job.target_id)
+            if service is None:
+                raise ValueError("Target LuST service not found.")
+            lust_service_manager.apply_service(
+                db, service, progress_callback=lambda step: self._progress(db, job, step)
+            )
+            db.refresh(service)
+            self._jobs.succeed(
+                db,
+                job,
+                {"service_id": service.id, "service_name": service.name, "state": service.state},
             )
             return
 
