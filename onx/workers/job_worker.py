@@ -28,14 +28,13 @@ from onx.schemas.route_policies import RoutePolicyRead
 from onx.schemas.transit_policies import TransitPolicyRead
 from onx.schemas.wg_services import WgServiceRead
 from onx.schemas.xray_services import XrayServiceRead
+from onx.services.agh_install_service import AghInstallService
 from onx.services.awg_service_service import awg_service_manager
 from onx.services.discovery_service import DiscoveryService
-from onx.services.lust_service_service import lust_service_manager
 from onx.services.interface_runtime_service import InterfaceRuntimeService
 from onx.services.job_service import JobCancelledError, JobService
 from onx.services.link_service import LinkService
 from onx.services.lust_service_service import lust_service_manager
-from onx.services.agh_install_service import AghInstallService
 from onx.services.node_runtime_bootstrap_service import NodeRuntimeBootstrapService
 from onx.services.openvpn_cloak_service_service import openvpn_cloak_service_manager
 from onx.services.route_policy_service import RoutePolicyService
@@ -310,8 +309,9 @@ class JobWorker:
                 db,
                 job,
                 {
-                    "service": lust_service_manager.serialize_service(db, applied_service),
-                    "health": applied_service.health_summary_json,
+                    "service_id": applied_service.id,
+                    "service_name": applied_service.name,
+                    "state": applied_service.state,
                     "applied_at": datetime.now(timezone.utc).isoformat(),
                 },
             )
