@@ -63,9 +63,19 @@ class LustEdgeDeployService:
                 "client_ca_cert_path": "/etc/onx/lust-edge/client-ca.cert.pem",
                 "access_token_secret_path": "/etc/onx/lust-edge/access-token.secret",
             },
+            "acme": {
+                "enabled": bool(service.use_tls),
+                "server_name": service.tls_server_name or service.public_host,
+                "email": (service.acme_email or "").strip() or None,
+            },
         }
         return {
             "edge_config": edge_config,
+            "acme": {
+                "enabled": bool(service.use_tls),
+                "server_name": service.tls_server_name or service.public_host,
+                "email": (service.acme_email or "").strip() or None,
+            },
             "paths": {
                 "app_dir": "/opt/onx/lust-edge",
                 "app_py": "/opt/onx/lust-edge/onx_lust_edge.py",
@@ -77,6 +87,7 @@ class LustEdgeDeployService:
                 "nginx_site": f"/etc/nginx/sites-available/onx-lust-{service.id}.conf",
                 "nginx_site_enabled": f"/etc/nginx/sites-enabled/onx-lust-{service.id}.conf",
                 "systemd_unit": "/etc/systemd/system/onx-lust-edge.service",
+                "renew_hook": "/etc/letsencrypt/renewal-hooks/deploy/onx-lust-nginx-reload.sh",
             },
             "secret_refs": {
                 "client_ca_cert_ref": client_ca_ref,
@@ -88,6 +99,7 @@ class LustEdgeDeployService:
                 "onx-lust-edge.service": self.render_systemd_unit(),
                 "onx_lust_edge.py": self.render_edge_app(),
                 "install-edge.sh": self.render_install_script(),
+                "renew-nginx.sh": self.render_renew_hook(),
             },
         }
 
@@ -98,8 +110,9 @@ class LustEdgeDeployService:
         if not path.startswith("/"):
             path = "/" + path
         path_prefix = path.rstrip("/") + "/"
+        listen_port = int(service.listen_port or 443)
         return f"""server {{
-    listen 443 ssl http2;
+    listen {listen_port} ssl http2;
     server_name {server_name};
 
     ssl_certificate /etc/letsencrypt/live/{server_name}/fullchain.pem;
@@ -158,6 +171,16 @@ WantedBy=multi-user.target
 
     def render_install_script(self) -> str:
         return self._render_template("install-edge.sh.template")
+
+    @staticmethod
+    def render_renew_hook() -> str:
+        return """#!/usr/bin/env bash
+set -euo pipefail
+
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl reload nginx >/dev/null 2>&1 || true
+fi
+"""
 
     def _render_template(self, filename: str) -> str:
         return (self._templates_dir / filename).read_text(encoding="utf-8")

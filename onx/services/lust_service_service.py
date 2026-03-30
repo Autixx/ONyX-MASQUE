@@ -240,6 +240,7 @@ class LustServiceManager:
             "h2_path": service.h2_path,
             "use_tls": service.use_tls,
             "auth_scheme": service.auth_scheme,
+            "acme_email": service.acme_email,
             "client_dns_resolver": service.client_dns_resolver,
             "description": service.description,
             "desired_config_json": service.desired_config_json,

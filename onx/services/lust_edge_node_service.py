@@ -27,6 +27,7 @@ class LustEdgeNodeService:
         paths = dict(payload.get("paths") or {})
         files = dict(payload.get("files") or {})
         secret_refs = dict(payload.get("secret_refs") or {})
+        acme = dict(payload.get("acme") or {})
         secret_files = {
             paths["client_ca_cert"]: self._decrypt_secret_ref(db, secret_refs["client_ca_cert_ref"]),
             paths["access_token_secret"]: self._decrypt_secret_ref(db, secret_refs["access_token_secret_ref"]),
@@ -48,11 +49,26 @@ class LustEdgeNodeService:
         self._install_file(node, management_secret, paths["config_json"], files["config.json"], mode="0600")
         self._install_file(node, management_secret, paths["nginx_site"], files["nginx.conf"], mode="0644")
         self._install_file(node, management_secret, paths["systemd_unit"], files["onx-lust-edge.service"], mode="0644")
+        self._install_file(node, management_secret, paths["renew_hook"], files["renew-nginx.sh"], mode="0755")
         for path, content in secret_files.items():
             self._install_file(node, management_secret, path, content.strip() + "\n", mode="0600")
 
+        certbot_command = ""
+        if acme.get("enabled"):
+            server_name = str(acme.get("server_name") or "").strip()
+            if not server_name:
+                raise ValueError("LuST ACME server_name is required for TLS deployment.")
+            email = str(acme.get("email") or "").strip()
+            email_arg = f"--email {shlex.quote(email)}" if email else "--register-unsafely-without-email"
+            certbot_command = (
+                "systemctl stop nginx >/dev/null 2>&1 || true; "
+                "certbot certonly --standalone --non-interactive --agree-tos --keep-until-expiring "
+                f"--preferred-challenges http -d {shlex.quote(server_name)} {email_arg} && "
+            )
+
         command = (
             f"{shlex.quote(paths['install_script'])} && "
+            f"{certbot_command}"
             f"ln -sfn {shlex.quote(paths['nginx_site'])} {shlex.quote(paths['nginx_site_enabled'])} && "
             "rm -f /etc/nginx/sites-enabled/default >/dev/null 2>&1 || true; "
             "systemctl daemon-reload && "
@@ -84,6 +100,8 @@ class LustEdgeNodeService:
             "node_name": node.name,
             "public_endpoint": f"{service.public_host}:{service.public_port or service.listen_port}",
             "path": service.h2_path,
+            "tls_mode": "letsencrypt" if service.use_tls else "disabled",
+            "tls_server_name": service.tls_server_name or service.public_host,
             "applied_at": applied_at.isoformat(),
         }
         db.add(service)

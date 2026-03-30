@@ -38,6 +38,7 @@ window.showLustService = function showLustService(id){
     ['Public Port', String(service.public_port || service.listen_port || '-')],
     ['Listen', (service.listen_host || '0.0.0.0') + ':' + String(service.listen_port || '-')],
     ['TLS SNI', service.tls_server_name || service.public_host || '-'],
+    ['ACME E-mail', service.acme_email || '-'],
     ['HTTP/2 Path', service.h2_path || '-'],
     ['Auth', service.auth_scheme || '-'],
     ['DNS', service.client_dns_resolver || '-'],
@@ -63,6 +64,7 @@ window.openLustServiceModal = function openLustServiceModal(serviceId){
     +formInput('Public host', 'public_host', service ? (service.public_host || '') : '', {required:true})
     +formInput('Public port', 'public_port', service && service.public_port != null ? String(service.public_port) : '', {type:'number'})
     +formInput('TLS server name', 'tls_server_name', service ? (service.tls_server_name || '') : '', {help:'Defaults to public host when empty.'})
+    +formInput('ACME e-mail', 'acme_email', service ? (service.acme_email || '') : '', {help:"Optional Let's Encrypt account e-mail. When empty, certbot runs without e-mail."})
     +formInput('HTTP/2 path', 'h2_path', service ? (service.h2_path || '/lust') : '/lust', {required:true})
     +formInput('DNS resolver', 'client_dns_resolver', service ? (service.client_dns_resolver || '') : '', {help:'Optional client-side DNS hint.'})
     +formTextarea('Description', 'description', service ? (service.description || '') : '')
@@ -85,6 +87,7 @@ window.saveLustServiceForm = async function saveLustServiceForm(fd, serviceId){
     public_host: fd.get('public_host'),
     public_port: fd.get('public_port') ? parseInt(fd.get('public_port'), 10) : null,
     tls_server_name: (fd.get('tls_server_name') || '').trim() || null,
+    acme_email: (fd.get('acme_email') || '').trim() || null,
     h2_path: fd.get('h2_path'),
     client_dns_resolver: (fd.get('client_dns_resolver') || '').trim() || null,
     description: (fd.get('description') || '').trim() || null,

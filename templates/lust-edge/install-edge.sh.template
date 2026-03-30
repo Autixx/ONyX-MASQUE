@@ -25,9 +25,10 @@ setup_privilege() {
 
 install_packages() {
   ${SUDO} apt-get update
-  ${SUDO} apt-get install -y nginx python3 python3-venv python3-pip ca-certificates
+  ${SUDO} apt-get install -y nginx python3 python3-venv python3-pip ca-certificates certbot
   command -v nginx >/dev/null 2>&1 || fail "[lust-edge] nginx is missing after install."
   command -v python3 >/dev/null 2>&1 || fail "[lust-edge] python3 is missing after install."
+  command -v certbot >/dev/null 2>&1 || fail "[lust-edge] certbot is missing after install."
   command -v systemctl >/dev/null 2>&1 || fail "[lust-edge] systemctl is missing after install."
 }
 

@@ -18,6 +18,7 @@ class LustServiceRead(ONXBaseModel):
     h2_path: str
     use_tls: bool
     auth_scheme: str
+    acme_email: str | None
     client_dns_resolver: str | None
     description: str | None
     desired_config_json: dict | None
@@ -40,6 +41,7 @@ class LustServiceCreate(BaseModel):
     h2_path: str = Field(default="/lust", min_length=1, max_length=255)
     use_tls: bool = True
     auth_scheme: str = Field(default="bearer", min_length=1, max_length=32)
+    acme_email: str | None = Field(default=None, max_length=255)
     client_dns_resolver: str | None = Field(default=None, max_length=255)
     description: str | None = None
     desired_config_json: dict | None = None
@@ -59,6 +61,7 @@ class LustServiceUpdate(BaseModel):
     h2_path: str | None = Field(default=None, min_length=1, max_length=255)
     use_tls: bool | None = None
     auth_scheme: str | None = Field(default=None, min_length=1, max_length=32)
+    acme_email: str | None = Field(default=None, max_length=255)
     client_dns_resolver: str | None = Field(default=None, max_length=255)
     description: str | None = None
     desired_config_json: dict | None = None

@@ -27,6 +27,7 @@ class LustService(Base):
     h2_path: Mapped[str] = mapped_column(String(255), nullable=False, default="/lust")
     use_tls: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     auth_scheme: Mapped[str] = mapped_column(String(32), nullable=False, default="bearer")
+    acme_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     client_dns_resolver: Mapped[str | None] = mapped_column(String(255), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     desired_config_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
