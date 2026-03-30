@@ -34,6 +34,7 @@ def _job_target_type_labels(bind) -> set[str]:
 
 def upgrade() -> None:
     bind = op.get_bind()
+    inspector = sa.inspect(bind)
     if bind.dialect.name == "postgresql":
         labels = _job_target_type_labels(bind)
         for label in (
@@ -47,23 +48,28 @@ def upgrade() -> None:
                 op.execute(f"ALTER TYPE job_target_type ADD VALUE '{label}'")
                 labels.add(label)
 
-    op.create_table(
-        "quick_deploy_sessions",
-        sa.Column("id", sa.String(length=36), nullable=False),
-        sa.Column("scenario", sa.String(length=64), nullable=False),
-        sa.Column("state", sa.String(length=32), nullable=False),
-        sa.Column("current_stage", sa.String(length=128), nullable=True),
-        sa.Column("request_payload_json", sa.JSON(), nullable=False),
-        sa.Column("resources_json", sa.JSON(), nullable=False),
-        sa.Column("child_jobs_json", sa.JSON(), nullable=False),
-        sa.Column("error_text", sa.Text(), nullable=True),
-        sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-        sa.PrimaryKeyConstraint("id"),
-    )
-    op.create_index(op.f("ix_quick_deploy_sessions_scenario"), "quick_deploy_sessions", ["scenario"], unique=False)
-    op.create_index(op.f("ix_quick_deploy_sessions_state"), "quick_deploy_sessions", ["state"], unique=False)
+    if "quick_deploy_sessions" not in inspector.get_table_names():
+        op.create_table(
+            "quick_deploy_sessions",
+            sa.Column("id", sa.String(length=36), nullable=False),
+            sa.Column("scenario", sa.String(length=64), nullable=False),
+            sa.Column("state", sa.String(length=32), nullable=False),
+            sa.Column("current_stage", sa.String(length=128), nullable=True),
+            sa.Column("request_payload_json", sa.JSON(), nullable=False),
+            sa.Column("resources_json", sa.JSON(), nullable=False),
+            sa.Column("child_jobs_json", sa.JSON(), nullable=False),
+            sa.Column("error_text", sa.Text(), nullable=True),
+            sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True),
+            sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+            sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+            sa.PrimaryKeyConstraint("id"),
+        )
+        inspector = sa.inspect(bind)
+    existing_indexes = {str(item["name"]) for item in inspector.get_indexes("quick_deploy_sessions")}
+    if op.f("ix_quick_deploy_sessions_scenario") not in existing_indexes:
+        op.create_index(op.f("ix_quick_deploy_sessions_scenario"), "quick_deploy_sessions", ["scenario"], unique=False)
+    if op.f("ix_quick_deploy_sessions_state") not in existing_indexes:
+        op.create_index(op.f("ix_quick_deploy_sessions_state"), "quick_deploy_sessions", ["state"], unique=False)
 
 
 def downgrade() -> None:

@@ -17,14 +17,25 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("xray_services", sa.Column("reality_enabled", sa.Boolean(), nullable=False, server_default=sa.text("false")))
-    op.add_column("xray_services", sa.Column("reality_dest", sa.String(length=255), nullable=True))
-    op.add_column("xray_services", sa.Column("reality_private_key", sa.Text(), nullable=True))
-    op.add_column("xray_services", sa.Column("reality_public_key", sa.Text(), nullable=True))
-    op.add_column("xray_services", sa.Column("reality_short_id", sa.String(length=32), nullable=True))
-    op.add_column("xray_services", sa.Column("reality_fingerprint", sa.String(length=64), nullable=True))
-    op.add_column("xray_services", sa.Column("reality_spider_x", sa.String(length=255), nullable=True))
     bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    existing_columns = {str(item["name"]) for item in inspector.get_columns("xray_services")}
+
+    if "reality_enabled" not in existing_columns:
+        op.add_column("xray_services", sa.Column("reality_enabled", sa.Boolean(), nullable=False, server_default=sa.text("false")))
+    if "reality_dest" not in existing_columns:
+        op.add_column("xray_services", sa.Column("reality_dest", sa.String(length=255), nullable=True))
+    if "reality_private_key" not in existing_columns:
+        op.add_column("xray_services", sa.Column("reality_private_key", sa.Text(), nullable=True))
+    if "reality_public_key" not in existing_columns:
+        op.add_column("xray_services", sa.Column("reality_public_key", sa.Text(), nullable=True))
+    if "reality_short_id" not in existing_columns:
+        op.add_column("xray_services", sa.Column("reality_short_id", sa.String(length=32), nullable=True))
+    if "reality_fingerprint" not in existing_columns:
+        op.add_column("xray_services", sa.Column("reality_fingerprint", sa.String(length=64), nullable=True))
+    if "reality_spider_x" not in existing_columns:
+        op.add_column("xray_services", sa.Column("reality_spider_x", sa.String(length=255), nullable=True))
+
     if bind.dialect.name != "sqlite":
         op.alter_column("xray_services", "reality_enabled", server_default=None)
 
