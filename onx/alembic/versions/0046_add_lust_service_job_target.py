@@ -17,7 +17,7 @@ depends_on = None
 def upgrade() -> None:
     bind = op.get_bind()
     if bind.dialect.name == "postgresql":
-        op.execute("ALTER TYPE job_target_type ADD VALUE IF NOT EXISTS 'lust_service'")
+        op.execute("ALTER TYPE job_target_type ADD VALUE IF NOT EXISTS 'LUST_SERVICE'")
 
 
 def downgrade() -> None:
