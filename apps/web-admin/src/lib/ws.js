@@ -47,20 +47,20 @@ window.connectWS = function connectWS(){
       var payload = data.payload || {};
       var msg = payload.message || payload.detail || payload.id || JSON.stringify(payload);
       window.pushEv(type, msg, payload.created_at);
-      if(type.indexOf('job.') === 0){ window.refreshJobs?.().catch(function(){}); window.refreshHealth?.().catch(function(){}); }
-      if(type.indexOf('link.') === 0){ window.refreshLinks?.().catch(function(){}); window.scheduleTopologyRealtimeRefresh?.(); }
-      if(type.indexOf('node.') === 0){ window.refreshNodes?.().catch(function(){}); window.scheduleTopologyRealtimeRefresh?.(); }
-      if(type.indexOf('node.traffic.') === 0){ window.refreshNodes?.().catch(function(){}); window.refreshNodeTrafficSummary?.().catch(function(){}); window.scheduleTopologyRealtimeRefresh?.(); }
-      if(type.indexOf('registration.') === 0){ window.loadRegistrations?.().catch(function(){}); window.loadUsers?.().catch(function(){}); window.loadSubscriptions?.().catch(function(){}); }
-      if(type.indexOf('peer.') === 0){ window.loadPeers?.().catch(function(){}); window.refreshLustServices?.().catch(function(){}); }
-      if(type.indexOf('lust_service.') === 0){ window.refreshLustServices?.().catch(function(){}); window.loadPeers?.().catch(function(){}); window.refreshAudit?.().catch(function(){}); }
-      if(type.indexOf('user.') === 0){ window.loadUsers?.().catch(function(){}); window.loadTransportPackages?.().catch(function(){}); }
-      if(type.indexOf('subscription.') === 0){ window.loadSubscriptions?.().catch(function(){}); }
-      if(type.indexOf('plan.') === 0){ window.loadPlans?.().catch(function(){}); }
-      if(type.indexOf('referral_code.') === 0){ window.loadReferralCodes?.().catch(function(){}); }
-      if(type.indexOf('device.') === 0){ window.loadDevices?.().catch(function(){}); }
-      if(type.indexOf('transport_package.') === 0){ window.loadTransportPackages?.().catch(function(){}); }
-      if(type === 'audit.event'){ window.refreshAudit?.().catch(function(){}); }
+      if(type.indexOf('job.') === 0){ if(window.pageVisible?.('jobs')) window.refreshJobs?.().catch(function(){}); if(window.pageVisible?.('system')) window.refreshHealth?.().catch(function(){}); }
+      if(type.indexOf('link.') === 0){ if(window.pageVisible?.('topology')) window.scheduleTopologyRealtimeRefresh?.(); }
+      if(type.indexOf('node.') === 0){ if(window.pageVisible?.('nodes')) window.refreshNodes?.().catch(function(){}); if(window.pageVisible?.('topology')) window.scheduleTopologyRealtimeRefresh?.(); }
+      if(type.indexOf('node.traffic.') === 0){ if(window.pageVisible?.('nodes')) window.refreshNodes?.().catch(function(){}); if(window.pageVisible?.('traffic')) window.refreshNodeTrafficSummary?.().catch(function(){}); if(window.pageVisible?.('topology')) window.scheduleTopologyRealtimeRefresh?.(); }
+      if(type.indexOf('registration.') === 0){ if(window.pageVisible?.('registrations')) window.loadRegistrations?.().catch(function(){}); if(window.pageVisible?.('users')) window.loadUsers?.().catch(function(){}); if(window.pageVisible?.('management')) window.loadSubscriptions?.().catch(function(){}); }
+      if(type.indexOf('peer.') === 0){ if(window.pageVisible?.('peers')) window.loadPeers?.().catch(function(){}); if(window.pageVisible?.('lust')) window.refreshLustServices?.().catch(function(){}); }
+      if(type.indexOf('lust_service.') === 0){ if(window.pageVisible?.('lust')) window.refreshLustServices?.().catch(function(){}); if(window.pageVisible?.('peers')) window.loadPeers?.().catch(function(){}); if(window.pageVisible?.('audit')) window.refreshAudit?.().catch(function(){}); }
+      if(type.indexOf('user.') === 0){ if(window.pageVisible?.('users')) window.loadUsers?.().catch(function(){}); if(window.pageVisible?.('management')) window.loadTransportPackages?.().catch(function(){}); }
+      if(type.indexOf('subscription.') === 0){ if(window.pageVisible?.('management')) window.loadSubscriptions?.().catch(function(){}); }
+      if(type.indexOf('plan.') === 0){ if(window.pageVisible?.('management')) window.loadPlans?.().catch(function(){}); }
+      if(type.indexOf('referral_code.') === 0){ if(window.pageVisible?.('referral-codes')) window.loadReferralCodes?.().catch(function(){}); }
+      if(type.indexOf('device.') === 0){ if(window.pageVisible?.('devices')) window.loadDevices?.().catch(function(){}); }
+      if(type.indexOf('transport_package.') === 0){ if(window.pageVisible?.('management')) window.loadTransportPackages?.().catch(function(){}); }
+      if(type === 'audit.event' && window.pageVisible?.('audit')){ window.refreshAudit?.().catch(function(){}); }
     }catch(_){ }
   };
   ws.onclose = function(event){

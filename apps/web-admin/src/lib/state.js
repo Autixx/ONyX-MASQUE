@@ -25,6 +25,9 @@ window.JOB_EVENTS          = {};
 window.GRAPH_DATA          = {nodes:[], edges:[], generated_at:null};
 window.TOPO_HITBOXES       = {nodes:[], edges:[]};
 window.TOPO_PATH           = null;
+window.ADMIN_ME            = null;
+window.ADMIN_ROLES         = [];
+window.ADMIN_ROLE_SET      = {};
 
 // ── Lookup functions ─────────────────────────────────────────────────────────
 

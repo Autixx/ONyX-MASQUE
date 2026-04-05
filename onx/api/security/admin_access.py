@@ -23,66 +23,76 @@ def _b64url_decode(value: str) -> bytes:
 
 
 class AdminAccessControl:
+    ROLE_ALIASES = {
+        "viewer": "l2",
+        "operator": "l3",
+    }
+
     DEFAULT_PERMISSION_MATRIX: dict[str, dict] = {
         "access_rules.read": {"roles": ["admin"], "description": "Read API access rules"},
         "access_rules.write": {"roles": ["admin"], "description": "Modify API access rules"},
-        "audit_logs.read": {"roles": ["viewer", "operator", "admin"], "description": "Read audit logs"},
-        "maintenance.read": {"roles": ["viewer", "operator", "admin"], "description": "Read retention policy"},
-        "maintenance.write": {"roles": ["operator", "admin"], "description": "Run retention cleanup"},
-        "system_summary.read": {"roles": ["viewer", "operator", "admin"], "description": "Read backend system summary"},
-        "fail2ban.read": {"roles": ["viewer", "operator", "admin"], "description": "Read fail2ban status and logs"},
-        "worker_health.read": {"roles": ["viewer", "operator", "admin"], "description": "Read worker health"},
-        "jobs.read": {"roles": ["viewer", "operator", "admin"], "description": "Read jobs and events"},
-        "jobs.write": {"roles": ["operator", "admin"], "description": "Modify jobs and locks"},
-        "nodes.read": {"roles": ["viewer", "operator", "admin"], "description": "Read nodes"},
-        "nodes.write": {"roles": ["operator", "admin"], "description": "Modify nodes and node jobs"},
-        "node_traffic.read": {"roles": ["viewer", "operator", "admin"], "description": "Read node traffic accounting"},
-        "node_traffic.write": {"roles": ["operator", "admin"], "description": "Reset and rollover node traffic accounting"},
-        "devices.read": {"roles": ["viewer", "operator", "admin"], "description": "Read devices"},
-        "devices.write": {"roles": ["operator", "admin"], "description": "Modify devices"},
-        "users.read": {"roles": ["viewer", "operator", "admin"], "description": "Read users"},
-        "users.write": {"roles": ["operator", "admin"], "description": "Modify users"},
-        "lust_services.read": {"roles": ["viewer", "operator", "admin"], "description": "Read LuST services"},
-        "lust_services.write": {"roles": ["operator", "admin"], "description": "Modify and apply LuST services"},
-        "transport_packages.read": {"roles": ["viewer", "operator", "admin"], "description": "Read client transport packages"},
-        "transport_packages.write": {"roles": ["operator", "admin"], "description": "Modify and reconcile client transport packages"},
-        "plans.read": {"roles": ["viewer", "operator", "admin"], "description": "Read plans"},
-        "plans.write": {"roles": ["operator", "admin"], "description": "Modify plans"},
-        "subscriptions.read": {"roles": ["viewer", "operator", "admin"], "description": "Read subscriptions"},
-        "subscriptions.write": {"roles": ["operator", "admin"], "description": "Modify subscriptions"},
-        "quick_deploy.read": {"roles": ["viewer", "operator", "admin"], "description": "Read quick deploy sessions"},
-        "quick_deploy.write": {"roles": ["operator", "admin"], "description": "Create and cancel quick deploy sessions"},
-        "referral_codes.read": {"roles": ["viewer", "operator", "admin"], "description": "Read referral codes"},
-        "referral_codes.write": {"roles": ["operator", "admin"], "description": "Modify referral codes"},
-        "registrations.read": {"roles": ["viewer", "operator", "admin"], "description": "Read registrations"},
-        "registrations.write": {"roles": ["operator", "admin"], "description": "Approve and reject registrations"},
-        "peers.read": {"roles": ["viewer", "operator", "admin"], "description": "Read peers"},
-        "peers.write": {"roles": ["operator", "admin"], "description": "Modify peers"},
-        "awg_services.read": {"roles": ["viewer", "operator", "admin"], "description": "Read AWG services"},
-        "awg_services.write": {"roles": ["operator", "admin"], "description": "Modify and apply AWG services"},
-        "wg_services.read": {"roles": ["viewer", "operator", "admin"], "description": "Read WG services"},
-        "wg_services.write": {"roles": ["operator", "admin"], "description": "Modify and apply WG services"},
-        "openvpn_cloak_services.read": {"roles": ["viewer", "operator", "admin"], "description": "Read OpenVPN+Cloak services"},
-        "openvpn_cloak_services.write": {"roles": ["operator", "admin"], "description": "Modify and apply OpenVPN+Cloak services"},
-        "xray_services.read": {"roles": ["viewer", "operator", "admin"], "description": "Read Xray services"},
-        "xray_services.write": {"roles": ["operator", "admin"], "description": "Modify and apply Xray services"},
-        "links.read": {"roles": ["viewer", "operator", "admin"], "description": "Read links"},
-        "links.write": {"roles": ["operator", "admin"], "description": "Modify and apply links"},
-        "balancers.read": {"roles": ["viewer", "operator", "admin"], "description": "Read balancers"},
-        "balancers.write": {"roles": ["operator", "admin"], "description": "Modify balancers"},
-        "route_policies.read": {"roles": ["viewer", "operator", "admin"], "description": "Read route policies"},
-        "route_policies.write": {"roles": ["operator", "admin"], "description": "Modify and apply route policies"},
-        "transit_policies.read": {"roles": ["viewer", "operator", "admin"], "description": "Read transit policies"},
-        "transit_policies.write": {"roles": ["operator", "admin"], "description": "Modify and apply transit policies"},
-        "dns_policies.read": {"roles": ["viewer", "operator", "admin"], "description": "Read DNS policies"},
-        "dns_policies.write": {"roles": ["operator", "admin"], "description": "Modify DNS policies"},
-        "geo_policies.read": {"roles": ["viewer", "operator", "admin"], "description": "Read geo policies"},
-        "geo_policies.write": {"roles": ["operator", "admin"], "description": "Modify geo policies"},
-        "probes.read": {"roles": ["viewer", "operator", "admin"], "description": "Read probe results"},
-        "probes.write": {"roles": ["operator", "admin"], "description": "Run probes"},
-        "peer_traffic.read": {"roles": ["viewer", "operator", "admin"], "description": "Read node agent peer traffic"},
-        "topology.read": {"roles": ["viewer", "operator", "admin"], "description": "Read topology graph"},
-        "topology.plan": {"roles": ["viewer", "operator", "admin"], "description": "Run path planner"},
+        "audit_logs.read": {"roles": ["audit", "admin"], "description": "Read audit logs"},
+        "maintenance.read": {"roles": ["l3", "audit", "admin"], "description": "Read retention policy"},
+        "maintenance.write": {"roles": ["l3", "admin"], "description": "Run retention cleanup"},
+        "system_summary.read": {"roles": ["l2", "l3", "audit", "admin"], "description": "Read backend system summary"},
+        "fail2ban.read": {"roles": ["l2", "l3", "audit", "admin"], "description": "Read fail2ban status and logs"},
+        "worker_health.read": {"roles": ["l2", "l3", "audit", "admin"], "description": "Read worker health"},
+        "realtime.read": {"roles": ["l1", "l2", "l3", "audit", "admin"], "description": "Read admin realtime event stream"},
+        "jobs.read": {"roles": ["l2", "l3", "audit", "admin"], "description": "Read jobs and events"},
+        "jobs.write": {"roles": ["l2", "l3", "admin"], "description": "Modify jobs and locks"},
+        "nodes.read": {"roles": ["l2", "l3", "audit", "admin"], "description": "Read nodes"},
+        "nodes.write": {"roles": ["l2", "l3", "admin"], "description": "Modify nodes and node jobs"},
+        "node_traffic.read": {"roles": ["l2", "l3", "audit", "admin"], "description": "Read node traffic accounting"},
+        "node_traffic.write": {"roles": ["l3", "admin"], "description": "Reset and rollover node traffic accounting"},
+        "devices.read": {"roles": ["l2", "l3", "admin"], "description": "Read devices"},
+        "devices.write": {"roles": ["l2", "l3", "admin"], "description": "Modify devices"},
+        "users.read": {"roles": ["l2", "l3", "admin"], "description": "Read users"},
+        "users.write": {"roles": ["l2", "l3", "admin"], "description": "Modify users"},
+        "lust_services.read": {"roles": ["l2", "l3", "audit", "admin"], "description": "Read LuST services"},
+        "lust_services.write": {"roles": ["l2", "l3", "admin"], "description": "Modify and apply LuST services"},
+        "transport_packages.read": {"roles": ["l2", "l3", "admin"], "description": "Read client transport packages"},
+        "transport_packages.write": {"roles": ["l3", "admin"], "description": "Modify and reconcile client transport packages"},
+        "plans.read": {"roles": ["l2", "l3", "admin"], "description": "Read plans"},
+        "plans.write": {"roles": ["l3", "admin"], "description": "Modify plans"},
+        "subscriptions.read": {"roles": ["l2", "l3", "admin"], "description": "Read subscriptions"},
+        "subscriptions.write": {"roles": ["l2", "l3", "admin"], "description": "Modify subscriptions"},
+        "quick_deploy.read": {"roles": ["l2", "l3", "admin"], "description": "Read quick deploy sessions"},
+        "quick_deploy.write": {"roles": ["l2", "l3", "admin"], "description": "Create and cancel quick deploy sessions"},
+        "referral_codes.read": {"roles": ["l2", "l3", "admin"], "description": "Read referral codes"},
+        "referral_codes.write": {"roles": ["l2", "l3", "admin"], "description": "Modify referral codes"},
+        "registrations.read": {"roles": ["l1", "l2", "l3", "admin"], "description": "Read registrations"},
+        "registrations.write": {"roles": ["l1", "l2", "l3", "admin"], "description": "Approve and reject registrations"},
+        "peers.read": {"roles": ["l2", "l3", "admin"], "description": "Read peers"},
+        "peers.write": {"roles": ["l2", "l3", "admin"], "description": "Modify peers"},
+        "awg_services.read": {"roles": ["l3", "admin"], "description": "Read AWG services"},
+        "awg_services.write": {"roles": ["l3", "admin"], "description": "Modify and apply AWG services"},
+        "wg_services.read": {"roles": ["l3", "admin"], "description": "Read WG services"},
+        "wg_services.write": {"roles": ["l3", "admin"], "description": "Modify and apply WG services"},
+        "openvpn_cloak_services.read": {"roles": ["l3", "admin"], "description": "Read OpenVPN+Cloak services"},
+        "openvpn_cloak_services.write": {"roles": ["l3", "admin"], "description": "Modify and apply OpenVPN+Cloak services"},
+        "xray_services.read": {"roles": ["l3", "admin"], "description": "Read Xray services"},
+        "xray_services.write": {"roles": ["l3", "admin"], "description": "Modify and apply Xray services"},
+        "links.read": {"roles": ["l3", "admin"], "description": "Read links"},
+        "links.write": {"roles": ["l3", "admin"], "description": "Modify and apply links"},
+        "balancers.read": {"roles": ["l3", "admin"], "description": "Read balancers"},
+        "balancers.write": {"roles": ["l3", "admin"], "description": "Modify balancers"},
+        "route_policies.read": {"roles": ["l3", "admin"], "description": "Read route policies"},
+        "route_policies.write": {"roles": ["l3", "admin"], "description": "Modify and apply route policies"},
+        "transit_policies.read": {"roles": ["l3", "admin"], "description": "Read transit policies"},
+        "transit_policies.write": {"roles": ["l3", "admin"], "description": "Modify and apply transit policies"},
+        "dns_policies.read": {"roles": ["l3", "admin"], "description": "Read DNS policies"},
+        "dns_policies.write": {"roles": ["l3", "admin"], "description": "Modify DNS policies"},
+        "geo_policies.read": {"roles": ["l3", "admin"], "description": "Read geo policies"},
+        "geo_policies.write": {"roles": ["l3", "admin"], "description": "Modify geo policies"},
+        "probes.read": {"roles": ["l2", "l3", "admin"], "description": "Read probe results"},
+        "probes.write": {"roles": ["l2", "l3", "admin"], "description": "Run probes"},
+        "peer_traffic.read": {"roles": ["l2", "l3", "audit", "admin"], "description": "Read node agent peer traffic"},
+        "topology.read": {"roles": ["l2", "l3", "audit", "admin"], "description": "Read topology graph"},
+        "topology.plan": {"roles": ["l2", "l3", "audit", "admin"], "description": "Run path planner"},
+        "support.read": {"roles": ["l1", "l2", "l3", "audit", "admin"], "description": "Read support tickets and history"},
+        "support.write": {"roles": ["l1", "l2", "l3", "admin"], "description": "Reply to support tickets and change support state"},
+        "client_updates.read": {"roles": ["l3", "admin"], "description": "Read client update configuration"},
+        "client_updates.write": {"roles": ["l3", "admin"], "description": "Modify and publish client updates"},
     }
 
     def __init__(self) -> None:
@@ -161,6 +171,12 @@ class AdminAccessControl:
             return "topology.read"
         if path == f"{prefix}/paths/plan":
             return "topology.plan"
+        if path == f"{prefix}/admin/support-tickets":
+            return "support.read"
+        if path.startswith(f"{prefix}/admin/support/"):
+            return "support.read" if method in {"GET", "HEAD", "OPTIONS"} else "support.write"
+        if path.startswith(f"{prefix}/admin/client-updates/"):
+            return "client_updates.read" if method in {"GET", "HEAD", "OPTIONS"} else "client_updates.write"
         if path == f"{prefix}/node-traffic/summary" or path.startswith(f"{prefix}/node-traffic/nodes/"):
             return "node_traffic.read" if method in {"GET", "HEAD", "OPTIONS"} else "node_traffic.write"
         if path == f"{prefix}/peer-traffic/summary" or path.startswith(f"{prefix}/peer-traffic/nodes/"):
@@ -201,6 +217,15 @@ class AdminAccessControl:
                 return f"{permission_prefix}.read" if method in {"GET", "HEAD", "OPTIONS"} else f"{permission_prefix}.write"
         return None
 
+    def classify_websocket_permission(self, websocket: WebSocket) -> str | None:
+        prefix = self._settings.api_prefix.rstrip("/")
+        path = websocket.url.path
+        if path == f"{prefix}/ws/admin/events":
+            return "realtime.read"
+        if path.startswith(f"{prefix}/ws/admin/support/"):
+            return "support.write"
+        return None
+
     def describe_permission_matrix(self, db=None) -> list[dict]:
         overrides: dict[str, AccessRule] = {}
         should_close = False
@@ -225,7 +250,7 @@ class AdminAccessControl:
                         "permission_key": permission_key,
                         "description": override.description or meta.get("description"),
                         "source": "db",
-                        "allowed_roles": list(override.allowed_roles_json or []),
+                        "allowed_roles": sorted(self._normalize_roles(override.allowed_roles_json or [])),
                         "enabled": bool(override.enabled),
                     }
                 )
@@ -247,7 +272,7 @@ class AdminAccessControl:
                     "permission_key": permission_key,
                     "description": override.description,
                     "source": "db",
-                    "allowed_roles": list(override.allowed_roles_json or []),
+                    "allowed_roles": sorted(self._normalize_roles(override.allowed_roles_json or [])),
                     "enabled": bool(override.enabled),
                 }
             )
@@ -259,11 +284,19 @@ class AdminAccessControl:
         if rule is not None:
             if not rule.enabled:
                 return set()
-            return {str(item).strip().lower() for item in (rule.allowed_roles_json or []) if str(item).strip()}
+            return {
+                self.ROLE_ALIASES.get(str(item).strip().lower(), str(item).strip().lower())
+                for item in (rule.allowed_roles_json or [])
+                if str(item).strip()
+            }
 
         default = self.DEFAULT_PERMISSION_MATRIX.get(permission_key)
         if default is not None:
-            return {str(item).strip().lower() for item in default["roles"] if str(item).strip()}
+            return {
+                self.ROLE_ALIASES.get(str(item).strip().lower(), str(item).strip().lower())
+                for item in default["roles"]
+                if str(item).strip()
+            }
         return {"admin"}
 
     def _authenticate(self, request: Request) -> tuple[set[str], str] | JSONResponse:
@@ -301,11 +334,12 @@ class AdminAccessControl:
     def authenticate_websocket(self, websocket: WebSocket) -> tuple[set[str], str] | None:
         session_result = self._authenticate_session_websocket(websocket)
         if session_result is not None:
-            return session_result
+            roles, auth_kind = session_result
+            return self._authorize_websocket_roles(websocket, roles, auth_kind)
 
         mode = self._settings.admin_api_auth_mode.strip().lower()
         if mode in {"", "disabled", "off", "none"}:
-            return {"admin"}, "disabled"
+            return self._authorize_websocket_roles(websocket, {"admin"}, "disabled")
 
         token = self._extract_websocket_bearer_token(websocket)
         if token is None:
@@ -313,16 +347,20 @@ class AdminAccessControl:
 
         if mode == "token":
             roles = self._validate_static_token(token)
-            return (roles, "token") if roles is not None else None
+            return self._authorize_websocket_roles(websocket, roles, "token") if roles is not None else None
         if mode == "jwt":
             auth_result = self._authenticate_jwt(token)
-            return auth_result if not isinstance(auth_result, JSONResponse) else None
+            if isinstance(auth_result, JSONResponse):
+                return None
+            return self._authorize_websocket_roles(websocket, auth_result[0], auth_result[1])
         if mode == "token_or_jwt":
             roles = self._validate_static_token(token)
             if roles is not None:
-                return roles, "token"
+                return self._authorize_websocket_roles(websocket, roles, "token")
             auth_result = self._authenticate_jwt(token)
-            return auth_result if not isinstance(auth_result, JSONResponse) else None
+            if isinstance(auth_result, JSONResponse):
+                return None
+            return self._authorize_websocket_roles(websocket, auth_result[0], auth_result[1])
         return None
 
     def _authenticate_session_request(self, request: Request) -> tuple[set[str], str] | None:
@@ -339,7 +377,7 @@ class AdminAccessControl:
             session = admin_web_auth_service.touch_session(db, session)
             request.state.admin_web_user = user
             request.state.admin_web_session = session
-            return set(admin_web_auth_service.build_user_roles(user)), "session"
+            return self._normalize_roles(admin_web_auth_service.build_user_roles(user)), "session"
 
     def _authenticate_session_websocket(self, websocket: WebSocket) -> tuple[set[str], str] | None:
         if not self._settings.admin_web_auth_enabled:
@@ -355,7 +393,7 @@ class AdminAccessControl:
                 return None
             user, session = resolved
             admin_web_auth_service.touch_session(db, session)
-            return set(admin_web_auth_service.build_user_roles(user)), "session"
+            return self._normalize_roles(admin_web_auth_service.build_user_roles(user)), "session"
 
     def _authenticate_token(self, token: str) -> tuple[set[str], str] | JSONResponse:
         roles = self._validate_static_token(token)
@@ -378,7 +416,7 @@ class AdminAccessControl:
         for entry in configured:
             roles, expected_token = self._parse_admin_token_entry(entry)
             if secrets.compare_digest(expected_token, token):
-                return roles
+                return self._normalize_roles(roles)
         return None
 
     @staticmethod
@@ -392,7 +430,7 @@ class AdminAccessControl:
             for item in raw_roles.split("|")
             if item.strip()
         }
-        return roles or {"admin"}, token
+        return self._normalize_roles(roles or {"admin"}), token
 
     def _authenticate_jwt(self, token: str) -> tuple[set[str], str] | JSONResponse:
         try:
@@ -410,7 +448,7 @@ class AdminAccessControl:
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="JWT token does not contain any admin roles.",
             )
-        return roles, "jwt"
+        return self._normalize_roles(roles), "jwt"
 
     def _validate_jwt_hs256(self, token: str) -> dict:
         secret_value = self._settings.admin_api_jwt_secret
@@ -501,6 +539,25 @@ class AdminAccessControl:
         if isinstance(raw_role, str) and raw_role.strip():
             roles.add(raw_role.strip().lower())
         return roles
+
+    def _authorize_websocket_roles(self, websocket: WebSocket, roles: set[str], auth_kind: str) -> tuple[set[str], str] | None:
+        normalized_roles = self._normalize_roles(roles)
+        permission_key = self.classify_websocket_permission(websocket)
+        if permission_key is None or "admin" in normalized_roles:
+            return normalized_roles, auth_kind
+        allowed_roles = self.resolve_allowed_roles(permission_key)
+        if normalized_roles.intersection(allowed_roles):
+            return normalized_roles, auth_kind
+        return None
+
+    def _normalize_roles(self, roles: set[str] | list[str]) -> set[str]:
+        normalized: set[str] = set()
+        for item in roles:
+            value = str(item).strip().lower()
+            if not value:
+                continue
+            normalized.add(self.ROLE_ALIASES.get(value, value))
+        return normalized or {"admin"}
 
     @staticmethod
     def _extract_bearer_token(request: Request) -> str | None:

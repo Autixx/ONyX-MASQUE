@@ -16,6 +16,7 @@ import './pages/traffic.js';
 import './pages/policies.js';
 import './pages/jobs.js';
 import './pages/audit.js';
+import './pages/topology.js';
 import './pages/peers.js';
 import './pages/registrations.js';
 import './pages/users.js';
@@ -27,6 +28,33 @@ import './pages/lust.js';
 import './pages/tickets.js';
 import './pages/apidebug.js';
 import './pages/clientupdate.js';
+import './pages/accessmatrix.js';
+
+window.normalizeAdminRole = function normalizeAdminRole(role) {
+  var value = String(role || '').trim().toLowerCase();
+  if (value === 'viewer') return 'l2';
+  if (value === 'operator') return 'l3';
+  return value;
+};
+
+window.setAdminContext = function setAdminContext(me) {
+  window.ADMIN_ME = me || null;
+  var roles = (((me || {}).user || {}).roles || []).map(window.normalizeAdminRole).filter(Boolean);
+  var seen = {};
+  roles = roles.filter(function(item) {
+    if (seen[item]) return false;
+    seen[item] = true;
+    return true;
+  });
+  window.ADMIN_ROLES = roles;
+  window.ADMIN_ROLE_SET = {};
+  roles.forEach(function(role) { window.ADMIN_ROLE_SET[role] = true; });
+};
+
+window.hasAnyAdminRole = function hasAnyAdminRole(roles) {
+  var wanted = Array.isArray(roles) ? roles : [roles];
+  return wanted.some(function(role) { return !!window.ADMIN_ROLE_SET[window.normalizeAdminRole(role)]; });
+};
 
 window.fmtBytes = function(mb) {
   if (mb == null) return '-';
@@ -45,29 +73,39 @@ window.isExpired = function(v) {
 };
 
 window.refreshIdentityData = async function() {
-  await Promise.all([
-    window.loadUsers?.(),
-    window.loadPlans?.(),
-    window.loadSubscriptions?.(),
-    window.loadReferralCodes?.(),
-    window.loadDevices?.(),
-    window.loadTransportPackages?.(),
-  ]);
+  var loaders = {};
+  function _queue(key, fn) {
+    if (!fn || loaders[key]) return;
+    loaders[key] = fn;
+  }
+  if (window.pageVisible?.('users')) {
+    _queue('users', window.loadUsers?.());
+    _queue('plans', window.loadPlans?.());
+    _queue('subscriptions', window.loadSubscriptions?.());
+  }
+  if (window.pageVisible?.('management')) {
+    _queue('plans', window.loadPlans?.());
+    _queue('subscriptions', window.loadSubscriptions?.());
+    _queue('transport', window.loadTransportPackages?.());
+  }
+  if (window.pageVisible?.('referral-codes')) _queue('referral', window.loadReferralCodes?.());
+  if (window.pageVisible?.('devices')) _queue('devices', window.loadDevices?.());
+  await Promise.all(Object.keys(loaders).map(function(key) { return loaders[key]; }));
 };
 
 window.loadData = async function() {
-  await Promise.all([
-    window.refreshNodes?.(),
-    window.refreshNodeTrafficSummary?.(),
-    window.refreshLustServices?.(),
-    window.refreshPolicies?.(),
-    window.refreshJobs?.(),
-    window.refreshAudit?.(),
-    window.loadPeers?.(),
-    window.loadRegistrations?.(),
-    window.refreshIdentityData?.(),
-    window.updateOpenTicketCount?.(),
-  ]);
+  var tasks = [];
+  if (window.pageVisible?.('nodes')) tasks.push(window.refreshNodes?.());
+  if (window.pageVisible?.('traffic')) tasks.push(window.refreshNodeTrafficSummary?.());
+  if (window.pageVisible?.('lust')) tasks.push(window.refreshLustServices?.());
+  if (window.pageVisible?.('policies')) tasks.push(window.refreshPolicies?.());
+  if (window.pageVisible?.('jobs')) tasks.push(window.refreshJobs?.());
+  if (window.pageVisible?.('audit')) tasks.push(window.refreshAudit?.());
+  if (window.pageVisible?.('peers')) tasks.push(window.loadPeers?.());
+  if (window.pageVisible?.('registrations')) tasks.push(window.loadRegistrations?.());
+  if (window.pageVisible?.('tickets')) tasks.push(window.updateOpenTicketCount?.());
+  tasks.push(window.refreshIdentityData?.());
+  await Promise.all(tasks.filter(Boolean));
 };
 
 var _healthPollTimer = null;
@@ -118,13 +156,16 @@ window.bootApp = async function(sessionMe) {
     if (me === undefined) {
       me = await window.apiFetch(window.API_PREFIX + '/auth/me');
     }
+    window.setAdminContext(me);
     username = me && me.user && me.user.username ? me.user.username : 'admin';
+  } else {
+    window.setAdminContext({ user: { roles: ['admin'] } });
   }
   window.isAuthenticated = true;
   document.getElementById('loginWrap').style.display = 'none';
   document.getElementById('appWrap').style.display = 'flex';
   document.getElementById('ubtn').textContent = username;
-  window.switchGroup('system');
+  window.refreshNavigationAccess?.();
   document.getElementById('lbtn').textContent = window.uiLiteral?.('AUTHENTICATE') || 'AUTHENTICATE';
   document.getElementById('lerr').textContent = '';
 
@@ -160,15 +201,21 @@ window.bootApp = async function(sessionMe) {
     return;
   }
 
-  try { await window.refreshHealth?.(); }
+  try {
+    if (window.pageVisible?.('system')) {
+      await window.refreshHealth?.();
+    }
+  }
   catch (err) { window.pushEv?.('system.error', 'initial health load failed: ' + String(err && err.message ? err.message : err)); }
   try { await window.loadData(); }
   catch (err) { window.pushEv?.('system.error', 'initial data load failed: ' + String(err && err.message ? err.message : err)); }
 
-  window.startHealthPolling();
-  window.startFailbanPolling?.();
-  window.startJobsTicker?.();
-  window.refreshFailban?.().catch(function() {});
+  if (window.pageVisible?.('system')) window.startHealthPolling();
+  if (window.pageVisible?.('failban')) {
+    window.startFailbanPolling?.();
+    window.refreshFailban?.().catch(function() {});
+  }
+  if (window.pageVisible?.('jobs')) window.startJobsTicker?.();
   window.connectWS?.();
   window.scheduleLocaleRefresh?.();
 };

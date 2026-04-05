@@ -30,15 +30,15 @@ window._updateSupportBadge = function _updateSupportBadge() {
   var badgeSub = document.getElementById('supportBadge_sub');
   if (badgeSub) { badgeSub.textContent = String(total); badgeSub.style.display = total > 0 ? '' : 'none'; }
 
-  // Red dot on "Debug" main group tab
-  var debugTab = document.querySelector('.nav-group-tab[data-g="debug"]');
-  if (debugTab) {
-    var dot = debugTab.querySelector('.support-unread-dot');
+  // Red dot on "Support" main group tab
+  var supportTab = document.querySelector('.nav-group-tab[data-g="support"]');
+  if (supportTab) {
+    var dot = supportTab.querySelector('.support-unread-dot');
     if (total > 0 && !dot) {
       dot = document.createElement('span');
       dot.className = 'support-unread-dot';
       dot.style.cssText = 'width:6px;height:6px;border-radius:50%;background:var(--red);display:inline-block;margin-left:4px;vertical-align:middle;';
-      debugTab.appendChild(dot);
+      supportTab.appendChild(dot);
     } else if (total === 0 && dot) {
       dot.remove();
     }

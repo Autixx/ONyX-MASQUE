@@ -8,6 +8,11 @@ from onx.schemas.access_rules import AccessRuleUpsert
 
 
 class AccessRuleService:
+    ROLE_ALIASES = {
+        "viewer": "l2",
+        "operator": "l3",
+    }
+
     def list_rules(self, db: Session) -> list[AccessRule]:
         return list(
             db.scalars(
@@ -49,7 +54,7 @@ class AccessRuleService:
         normalized: list[str] = []
         seen: set[str] = set()
         for role in roles:
-            value = role.strip().lower()
+            value = AccessRuleService.ROLE_ALIASES.get(role.strip().lower(), role.strip().lower())
             if not value:
                 continue
             if value not in seen:

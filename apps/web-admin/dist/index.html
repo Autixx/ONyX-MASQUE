@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>ONyX Panel</title>
-  <script type="module" crossorigin src="/assets/index-BxZsMQcd.js"></script>
+  <title>ONyX Panel</title>
+  <script type="module" crossorigin src="/assets/index-DM-hECi5.js"></script>
   <link rel="stylesheet" crossorigin href="/assets/index-QWWLg0u8.css">
 </head>
 <body>
@@ -71,11 +71,11 @@
 
   <!-- NAV MAIN GROUPS -->
   <div class="nav-main" id="navMain">
-    <div class="nav-group-tab active" data-g="system" onclick="switchGroup('system')">System</div>
-    <div class="nav-group-tab" data-g="network" onclick="switchGroup('network')">Network</div>
-    <div class="nav-group-tab" data-g="access" onclick="switchGroup('access')">Access Control</div>
-    <div class="nav-group-tab" data-g="services" onclick="switchGroup('services')">Services</div>
-    <div class="nav-group-tab" data-g="debug" onclick="switchGroup('debug')">Debug</div>
+    <div class="nav-group-tab active" data-g="infrastructure" onclick="switchGroup('infrastructure')">Infrastructure</div>
+    <div class="nav-group-tab" data-g="operations" onclick="switchGroup('operations')">Operations</div>
+    <div class="nav-group-tab" data-g="management" onclick="switchGroup('management')">Management</div>
+    <div class="nav-group-tab" data-g="support" onclick="switchGroup('support')">Support</div>
+    <div class="nav-group-tab" data-g="admin" onclick="switchGroup('admin')">Admin</div>
   </div>
   <!-- NAV SUB-TABS -->
   <div class="nav-sub" id="navSub">
@@ -97,23 +97,23 @@
             <div class="sys-stat-lbl">Backend</div>
             <div class="sys-stat-val" id="sb" style="color:var(--grn)">OK</div>
           </div>
-          <div class="sys-stat-card" onclick="switchGroup('network');showPage('jobs')" title="Go to Jobs">
+          <div class="sys-stat-card" onclick="switchGroup('operations');showPage('jobs')" title="Go to Deployments">
             <div class="sys-stat-lbl">Worker</div>
             <div class="sys-stat-val" id="sw" style="color:var(--grn)">OK</div>
           </div>
-          <div class="sys-stat-card" onclick="switchGroup('network');showPage('nodes')" title="Go to Nodes">
+          <div class="sys-stat-card" onclick="switchGroup('operations');showPage('nodes')" title="Go to Nodes">
             <div class="sys-stat-lbl">Nodes Online</div>
             <div class="sys-stat-val" id="sn">0/0</div>
           </div>
-          <div class="sys-stat-card" onclick="switchGroup('network');showPage('links')" title="Go to Links">
+          <div class="sys-stat-card" onclick="switchGroup('operations');showPage('policies')" title="Go to Routing">
             <div class="sys-stat-lbl">Active Links</div>
             <div class="sys-stat-val" id="sl">0</div>
           </div>
-          <div class="sys-stat-card" onclick="switchGroup('services')" title="Go to Services">
+          <div class="sys-stat-card" onclick="switchGroup('operations');showPage('lust')" title="Go to LuST Services">
             <div class="sys-stat-lbl">LuST Services</div>
             <div class="sys-stat-val" id="sServicesTotal" style="color:var(--acc)">0</div>
           </div>
-          <div class="sys-stat-card" id="openTicketsCard" onclick="switchGroup('system');showPage('tickets')" title="Go to Support Chat">
+          <div class="sys-stat-card" id="openTicketsCard" onclick="switchGroup('support');showPage('tickets')" title="Go to Support Chat">
             <div class="sys-stat-lbl">Support Requests</div>
             <div class="sys-stat-val" id="sOpenTickets" style="color:var(--grn)">0</div>
           </div>
@@ -333,7 +333,7 @@
 
       <!-- ── API DEBUG ── -->
       <div class="page" id="page-apidebug">
-        <div class="ph"><span class="ptitle">API Debug</span></div>
+        <div class="ph"><span class="ptitle">Debug</span></div>
         <div style="display:flex;gap:8px;margin-bottom:10px;align-items:center;">
           <select id="am" style="background:var(--bg2);border:1px solid var(--bdr);color:var(--acc);padding:8px 10px;border-radius:3px;font-size:14px;width:90px;">
             <option>GET</option><option>POST</option><option>PUT</option><option>DELETE</option>
@@ -349,7 +349,7 @@
 
       <!-- ── CLIENT UPDATE ── -->
       <div class="page" id="page-clientupdate">
-        <div class="ph"><span class="ptitle">Client Update</span></div>
+        <div class="ph"><span class="ptitle">Client Updates</span></div>
         <div id="clientUpdateContent"></div>
       </div>
 
@@ -424,7 +424,7 @@
       <!-- MANAGEMENT -->
       <div class="page" id="page-management">
         <div class="ph">
-          <span class="ptitle">Subscriptions</span>
+          <span class="ptitle">Billing / Access</span>
           <div class="pbtn-row">
             <button class="btn pri" id="btnAddPlan">+ ADD SUBSCRIPTION</button>
           </div>
@@ -595,6 +595,16 @@
         </div>
       </div>
 
+      <div class="page" id="page-access-matrix">
+        <div class="ph">
+          <span class="ptitle">Access Matrix</span>
+          <div class="pbtn-row">
+            <button class="btn" onclick="loadAccessMatrix()">REFRESH</button>
+          </div>
+        </div>
+        <div id="accessMatrixContent" class="tw" style="padding:12px;"></div>
+      </div>
+
     </div><!-- /main -->
   </div><!-- /layout -->
 </div><!-- /appWrap -->
@@ -618,6 +628,6 @@
 </div>
 
 <div class="toast-stack" id="toastStack"></div>
-
+
 </body>
 </html>

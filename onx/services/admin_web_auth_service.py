@@ -20,6 +20,11 @@ class AdminWebAuthError(ValueError):
 
 
 class AdminWebAuthService:
+    ROLE_ALIASES = {
+        "viewer": "l2",
+        "operator": "l3",
+    }
+
     def __init__(self) -> None:
         self._settings = get_settings()
 
@@ -199,6 +204,7 @@ class AdminWebAuthService:
             roles = [str(item).strip().lower() for item in value if str(item).strip()]
         elif isinstance(value, str):
             roles = [item.strip().lower() for item in value.split(",") if item.strip()]
+        roles = [AdminWebAuthService.ROLE_ALIASES.get(item, item) for item in roles]
         return sorted(set(roles or ["admin"]))
 
 
