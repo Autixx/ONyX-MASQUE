@@ -218,6 +218,13 @@ window.startJobsTicker = function startJobsTicker(){
   }, 1000);
 };
 
+window.stopJobsTicker = function stopJobsTicker(){
+  if(window._jobsTicker){
+    clearInterval(window._jobsTicker);
+    window._jobsTicker = null;
+  }
+};
+
 document.addEventListener('DOMContentLoaded', function(){
   window.bindJobsTable();
 });

@@ -118,6 +118,228 @@ window.startHealthPolling = function() {
   }, 15000);
 };
 
+window.stopHealthPolling = function() {
+  if (_healthPollTimer) {
+    clearInterval(_healthPollTimer);
+    _healthPollTimer = null;
+  }
+};
+
+window.PAGE_REFRESHERS = {
+  system: function() {
+    return Promise.all([
+      window.refreshHealth?.(),
+      window.updateOpenTicketCount?.(),
+    ].filter(Boolean));
+  },
+  nodes: function() {
+    return window.refreshNodes?.();
+  },
+  traffic: function() {
+    return window.refreshNodeTrafficSummary?.();
+  },
+  failban: function() {
+    return Promise.all([
+      window.refreshNodes?.(),
+      window.refreshFailban?.(),
+    ].filter(Boolean));
+  },
+  topology: function() {
+    if (!window.refreshTopology) return Promise.resolve();
+    return window.refreshTopology().then(function() {
+      return window.drawTopo?.();
+    });
+  },
+  audit: function() {
+    return window.refreshAudit?.();
+  },
+  jobs: function() {
+    return window.refreshJobs?.();
+  },
+  lust: function() {
+    return Promise.all([
+      window.refreshLustServices?.(),
+      window.loadPeers?.(),
+    ].filter(Boolean));
+  },
+  policies: function() {
+    return window.refreshPolicies?.();
+  },
+  clientupdate: function() {
+    if (!window.cuOnPageShow) return Promise.resolve();
+    return Promise.resolve(window.cuOnPageShow());
+  },
+  users: function() {
+    return Promise.all([
+      window.loadUsers?.(),
+      window.loadPlans?.(),
+      window.loadSubscriptions?.(),
+    ].filter(Boolean));
+  },
+  peers: function() {
+    return Promise.all([
+      window.loadPeers?.(),
+      window.refreshLustServices?.(),
+    ].filter(Boolean));
+  },
+  devices: function() {
+    return window.loadDevices?.();
+  },
+  registrations: function() {
+    return Promise.all([
+      window.loadRegistrations?.(),
+      window.loadUsers?.(),
+    ].filter(Boolean));
+  },
+  'referral-codes': function() {
+    return window.loadReferralCodes?.();
+  },
+  management: function() {
+    return Promise.all([
+      window.loadUsers?.(),
+      window.loadPlans?.(),
+      window.loadSubscriptions?.(),
+      window.loadTransportPackages?.(),
+    ].filter(Boolean));
+  },
+  tickets: function() {
+    return Promise.all([
+      Promise.resolve(window.loadSupportTickets?.(true)),
+      window.updateOpenTicketCount?.(),
+    ].filter(Boolean));
+  },
+  apidebug: function() {
+    return Promise.resolve();
+  },
+  'access-matrix': function() {
+    return window.loadAccessMatrix?.();
+  },
+};
+
+window.PAGE_WS_REFRESH_MAP = {
+  'job.': ['jobs', 'system', 'nodes', 'topology'],
+  'link.': ['topology'],
+  'node.': ['nodes', 'topology', 'failban', 'system'],
+  'node.traffic.': ['nodes', 'traffic', 'topology', 'system'],
+  'registration.': ['registrations', 'users', 'management'],
+  'peer.': ['peers', 'lust', 'management'],
+  'lust_service.': ['lust', 'peers'],
+  'lust_egress_pool.': ['lust', 'peers'],
+  'lust_route_map.': ['lust', 'peers'],
+  'user.': ['users', 'management', 'devices'],
+  'subscription.': ['management', 'users'],
+  'plan.': ['management', 'users'],
+  'referral_code.': ['referral-codes', 'management'],
+  'device.': ['devices', 'management', 'users'],
+  'transport_package.': ['management', 'users'],
+  'support.': ['tickets', 'system'],
+  'access_rule.': ['access-matrix'],
+  'audit.': ['audit'],
+};
+
+window._pageRefreshLocks = {};
+window._pageRefreshPending = {};
+window._pageRefreshTimers = {};
+window._livePageRefreshTimer = null;
+window.PAGE_LIVE_REFRESH_INTERVAL_MS = 10000;
+
+window.refreshPageNow = async function refreshPageNow(pageId, options) {
+  var opts = options || {};
+  var refresher = window.PAGE_REFRESHERS[pageId];
+  if (!refresher || !window.pageVisible?.(pageId) || !window.isAuthenticated) {
+    return;
+  }
+  if (window._pageRefreshLocks[pageId]) {
+    window._pageRefreshPending[pageId] = true;
+    return;
+  }
+  window._pageRefreshLocks[pageId] = true;
+  try {
+    await refresher();
+  } catch (err) {
+    if (!opts.silent) {
+      console.warn('page refresh failed', pageId, err);
+    }
+  } finally {
+    window._pageRefreshLocks[pageId] = false;
+    if (window._pageRefreshPending[pageId]) {
+      window._pageRefreshPending[pageId] = false;
+      window.refreshPageNow(pageId, opts);
+    }
+  }
+};
+
+window.queuePageRefresh = function queuePageRefresh(pageId, delayMs) {
+  if (!window.pageVisible?.(pageId) || !window.isAuthenticated) return;
+  var delay = Math.max(0, Number(delayMs || 0));
+  if (window._pageRefreshTimers[pageId]) {
+    clearTimeout(window._pageRefreshTimers[pageId]);
+  }
+  window._pageRefreshTimers[pageId] = setTimeout(function() {
+    window._pageRefreshTimers[pageId] = null;
+    window.refreshPageNow(pageId, { silent: true });
+  }, delay);
+};
+
+window.queuePagesRefresh = function queuePagesRefresh(pageIds, delayMs) {
+  (pageIds || []).forEach(function(pageId) {
+    window.queuePageRefresh(pageId, delayMs);
+  });
+};
+
+window.resolveEventPages = function resolveEventPages(eventType) {
+  var type = String(eventType || '');
+  var pages = [];
+  Object.keys(window.PAGE_WS_REFRESH_MAP).forEach(function(prefix) {
+    if (type.indexOf(prefix) !== 0) return;
+    pages = pages.concat(window.PAGE_WS_REFRESH_MAP[prefix]);
+  });
+  if (type === 'audit.event') pages.push('audit');
+  if (type === 'system.connected' || type === 'system.error') pages.push('system');
+  var seen = {};
+  return pages.filter(function(pageId) {
+    if (!pageId || seen[pageId]) return false;
+    seen[pageId] = true;
+    return true;
+  });
+};
+
+window.startLivePageRefresh = function startLivePageRefresh() {
+  if (window._livePageRefreshTimer) clearInterval(window._livePageRefreshTimer);
+  window._livePageRefreshTimer = setInterval(function() {
+    if (!window.isAuthenticated || document.hidden) return;
+    if (window.CURRENT_PAGE) {
+      window.refreshPageNow(window.CURRENT_PAGE, { silent: true });
+    }
+  }, window.PAGE_LIVE_REFRESH_INTERVAL_MS);
+};
+
+window.stopLivePageRefresh = function stopLivePageRefresh() {
+  if (window._livePageRefreshTimer) {
+    clearInterval(window._livePageRefreshTimer);
+    window._livePageRefreshTimer = null;
+  }
+};
+
+window.handlePageLifecycle = function handlePageLifecycle(pageId) {
+  var current = String(pageId || '');
+  if (current === 'system') window.startHealthPolling();
+  else window.stopHealthPolling?.();
+
+  if (current === 'failban') window.startFailbanPolling?.();
+  else window.stopFailbanPolling?.();
+
+  if (current === 'jobs') window.startJobsTicker?.();
+  else window.stopJobsTicker?.();
+
+  if (current === 'tickets') window.startSupportTicketsRefresh?.();
+  else window.stopSupportTicketsRefresh?.();
+
+  if (current) {
+    window.queuePageRefresh(current, 0);
+  }
+};
+
 window.isAuthenticated = false;
 
 window.doLogin = async function() {
@@ -210,12 +432,8 @@ window.bootApp = async function(sessionMe) {
   try { await window.loadData(); }
   catch (err) { window.pushEv?.('system.error', 'initial data load failed: ' + String(err && err.message ? err.message : err)); }
 
-  if (window.pageVisible?.('system')) window.startHealthPolling();
-  if (window.pageVisible?.('failban')) {
-    window.startFailbanPolling?.();
-    window.refreshFailban?.().catch(function() {});
-  }
-  if (window.pageVisible?.('jobs')) window.startJobsTicker?.();
+  window.handlePageLifecycle?.(window.CURRENT_PAGE);
+  window.startLivePageRefresh?.();
   window.connectWS?.();
   window.scheduleLocaleRefresh?.();
 };
@@ -302,4 +520,10 @@ document.addEventListener('DOMContentLoaded', function() {
       window.scheduleLocaleRefresh?.();
     }
   })();
+
+  document.addEventListener('visibilitychange', function() {
+    if (!document.hidden && window.isAuthenticated && window.CURRENT_PAGE) {
+      window.queuePageRefresh(window.CURRENT_PAGE, 0);
+    }
+  });
 });

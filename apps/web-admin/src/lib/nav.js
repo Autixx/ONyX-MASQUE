@@ -200,18 +200,9 @@ window.showPage = function showPage(pageId){
   document.querySelectorAll('.nav-group-tab').forEach(function(el){
     el.classList.toggle('active', el.getAttribute('data-g') === groupName);
   });
-
-  if (pageId === 'failban') { window.refreshFailban?.().catch(function(){}); }
-  if (pageId === 'clientupdate') { window.cuOnPageShow?.(); }
-  if (pageId === 'lust') { window.refreshLustServices?.().catch(function(){}); }
-  if (pageId === 'topology') { window.refreshTopology?.().then(window.drawTopo).catch(function(){}); }
-  if (pageId === 'access-matrix') { window.loadAccessMatrix?.().catch(function(){}); }
-  if (pageId === 'tickets') {
-    window.loadSupportTickets?.();
-    window.startSupportTicketsRefresh?.();
-    if (window._supportTicketId) window._clearSupportUnread?.(window._supportTicketId);
-  } else {
-    window.stopSupportTicketsRefresh?.();
+  window.handlePageLifecycle?.(pageId);
+  if (pageId === 'tickets' && window._supportTicketId) {
+    window._clearSupportUnread?.(window._supportTicketId);
   }
 
   location.hash = '#/' + groupName + '/' + pageId;

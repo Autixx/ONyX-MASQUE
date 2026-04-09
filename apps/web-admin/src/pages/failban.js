@@ -121,6 +121,13 @@ window.startFailbanPolling = function startFailbanPolling(){
   window._failbanTimer = setInterval(function(){ window.refreshFailban().catch(function(){}); }, 10000);
 };
 
+window.stopFailbanPolling = function stopFailbanPolling(){
+  if(window._failbanTimer){
+    clearInterval(window._failbanTimer);
+    window._failbanTimer = null;
+  }
+};
+
 window.failbanPauseToggle = function failbanPauseToggle(){
   window._failbanPaused = !window._failbanPaused;
   document.getElementById('failbanPauseLabel').textContent = window._failbanPaused ? 'RESUME' : 'PAUSE';
