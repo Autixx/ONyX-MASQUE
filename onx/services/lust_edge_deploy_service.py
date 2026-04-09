@@ -9,6 +9,7 @@ from onx.db.models.lust_service import LustService
 from onx.db.models.node_secret import NodeSecretKind
 from onx.services.device_certificate_service import device_certificate_service
 from onx.services.lust_access_token_service import lust_access_token_service
+from onx.services.lust_routing_service import lust_routing_service
 from onx.services.secret_service import SecretService
 
 
@@ -50,6 +51,7 @@ class LustEdgeDeployService:
                 "id": service.id,
                 "name": service.name,
                 "node_id": service.node_id,
+                "role": service.role,
                 "public_host": service.public_host,
                 "public_port": service.public_port or service.listen_port,
                 "tls_server_name": service.tls_server_name or service.public_host,
@@ -60,9 +62,11 @@ class LustEdgeDeployService:
             "trust": {
                 "token_issuer": "onx-control-plane",
                 "token_audience": "onx-lust-edge",
+                "upstream_token_audience": "onx-lust-edge-upstream",
                 "client_ca_cert_path": "/etc/onx/lust-edge/client-ca.cert.pem",
                 "access_token_secret_path": "/etc/onx/lust-edge/access-token.secret",
             },
+            "routing": lust_routing_service.build_gateway_runtime_config(db, service) if str(service.role or "").strip().lower() == "gate" else {},
             "acme": {
                 "enabled": bool(service.use_tls),
                 "server_name": service.tls_server_name or service.public_host,
@@ -118,7 +122,7 @@ class LustEdgeDeployService:
     ssl_certificate /etc/letsencrypt/live/{server_name}/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/{server_name}/privkey.pem;
     ssl_client_certificate /etc/onx/lust-edge/client-ca.cert.pem;
-    ssl_verify_client on;
+    ssl_verify_client optional;
 
     location = {path} {{
         proxy_pass http://127.0.0.1:9443{path};

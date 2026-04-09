@@ -9,6 +9,7 @@ class LustServiceRead(ONXBaseModel):
     id: str
     name: str
     node_id: str
+    role: str
     state: str
     listen_host: str
     listen_port: int
@@ -20,6 +21,9 @@ class LustServiceRead(ONXBaseModel):
     auth_scheme: str
     acme_email: str | None
     client_dns_resolver: str | None
+    country_code: str | None
+    selection_weight: int
+    maintenance_mode: bool
     description: str | None
     desired_config_json: dict | None
     health_summary_json: dict | None
@@ -33,6 +37,7 @@ class LustServiceCreate(BaseModel):
 
     name: str = Field(min_length=1, max_length=128)
     node_id: str
+    role: str = Field(default="standalone", min_length=1, max_length=32)
     listen_host: str = Field(default="0.0.0.0", min_length=1, max_length=255)
     listen_port: int = Field(default=443, ge=1, le=65535)
     public_host: str = Field(min_length=1, max_length=255)
@@ -43,6 +48,9 @@ class LustServiceCreate(BaseModel):
     auth_scheme: str = Field(default="bearer", min_length=1, max_length=32)
     acme_email: str | None = Field(default=None, max_length=255)
     client_dns_resolver: str | None = Field(default=None, max_length=255)
+    country_code: str | None = Field(default=None, max_length=8)
+    selection_weight: int = Field(default=100, ge=1, le=1000000)
+    maintenance_mode: bool = False
     description: str | None = None
     desired_config_json: dict | None = None
 
@@ -52,6 +60,7 @@ class LustServiceUpdate(BaseModel):
 
     name: str | None = Field(default=None, min_length=1, max_length=128)
     node_id: str | None = None
+    role: str | None = Field(default=None, min_length=1, max_length=32)
     state: str | None = Field(default=None, min_length=1, max_length=32)
     listen_host: str | None = Field(default=None, min_length=1, max_length=255)
     listen_port: int | None = Field(default=None, ge=1, le=65535)
@@ -63,5 +72,8 @@ class LustServiceUpdate(BaseModel):
     auth_scheme: str | None = Field(default=None, min_length=1, max_length=32)
     acme_email: str | None = Field(default=None, max_length=255)
     client_dns_resolver: str | None = Field(default=None, max_length=255)
+    country_code: str | None = Field(default=None, max_length=8)
+    selection_weight: int | None = Field(default=None, ge=1, le=1000000)
+    maintenance_mode: bool | None = None
     description: str | None = None
     desired_config_json: dict | None = None

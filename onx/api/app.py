@@ -28,6 +28,8 @@ from onx.api.routers.fail2ban import router as fail2ban_router
 from onx.api.routers.geo_policies import router as geo_policies_router
 from onx.api.routers.health import router as health_router
 from onx.api.routers.jobs import router as jobs_router
+from onx.api.routers.lust_egress_pools import router as lust_egress_pools_router
+from onx.api.routers.lust_route_maps import router as lust_route_maps_router
 from onx.api.routers.lust_services import router as lust_services_router
 from onx.api.routers.maintenance import router as maintenance_router
 from onx.api.routers.system_config import router as system_config_router
@@ -176,6 +178,8 @@ def create_app() -> FastAPI:
     app.include_router(devices_router, prefix=settings.api_prefix)
     app.include_router(users_router, prefix=settings.api_prefix)
     app.include_router(lust_services_router, prefix=settings.api_prefix)
+    app.include_router(lust_egress_pools_router, prefix=settings.api_prefix)
+    app.include_router(lust_route_maps_router, prefix=settings.api_prefix)
     app.include_router(transport_packages_router, prefix=settings.api_prefix)
     app.include_router(plans_router, prefix=settings.api_prefix)
     app.include_router(subscriptions_router, prefix=settings.api_prefix)

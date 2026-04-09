@@ -353,6 +353,25 @@ def b64u_encode(raw: bytes) -> str:
 def b64u_decode(value: str) -> bytes:
     return base64.urlsafe_b64decode(value.encode("ascii") + b"=" * (-len(value) % 4))
 
+
+def decode_lust_bundle_string(value: str) -> dict:
+    raw = str(value or "").strip()
+    if not raw:
+        raise ValueError("Empty LuST bundle string.")
+    if not raw.startswith("lst1."):
+        raise ValueError("Unsupported LuST bundle string format.")
+    payload = raw.split(".", 1)[1].strip()
+    if not payload:
+        raise ValueError("Malformed LuST bundle string.")
+    try:
+        decoded = b64u_decode(payload).decode("utf-8")
+        parsed = json.loads(decoded)
+    except Exception as exc:
+        raise ValueError("Unable to decode LuST bundle string.") from exc
+    if not isinstance(parsed, dict):
+        raise ValueError("Decoded LuST bundle string is not an envelope object.")
+    return parsed
+
 def fmt_bytes(n):
     if n is None: return "—"
     for unit in ("B","KB","MB","GB","TB"):
@@ -3130,6 +3149,13 @@ class DashboardScreen(QWidget):
         ct=ChaCha20Poly1305(key).decrypt(b64u_decode(env["nonce"]),b64u_decode(env["ciphertext"]),None)
         return json.loads(ct.decode())
 
+    def _dec_bundle_payload(self, payload):
+        if isinstance(payload, str):
+            payload = decode_lust_bundle_string(payload)
+        if not isinstance(payload, dict):
+            raise RuntimeError("Unsupported encrypted bundle payload.")
+        return self._dec_env(payload)
+
     def _verify_device(self):
         if not self.st.device_id: _error_dialog(self,"Verify","Register device first."); return
         base=self.st.base_url; did=self.st.device_id; hdrs=self._hdrs()
@@ -3177,13 +3203,15 @@ class DashboardScreen(QWidget):
                         current_payload = current.json()
                     except Exception as exc:
                         raise RuntimeError(f"Unable to parse current bundle response: {exc}. Body: {(current.text or '').strip()[:300]}") from exc
-                    if current_payload and current_payload.get("encrypted_bundle"):
-                        dec = self._dec_env(current_payload["encrypted_bundle"])
+                    if current_payload and (current_payload.get("bundle_string") or current_payload.get("encrypted_bundle")):
+                        bundle_payload = current_payload.get("bundle_string") or current_payload.get("encrypted_bundle")
+                        dec = self._dec_bundle_payload(bundle_payload)
                         return {
                             "source": "current",
                             "bundle_id": current_payload["id"],
                             "expires_at": current_payload["expires_at"],
                             "bundle_hash": current_payload["bundle_hash"],
+                            "bundle_string": current_payload.get("bundle_string") or "",
                             "profile_count": len(((dec or {}).get("runtime") or {}).get("profiles") or []),
                             "decrypted": dec,
                         }
@@ -3194,9 +3222,11 @@ class DashboardScreen(QWidget):
                     issued=r.json()
                 except Exception as exc:
                     raise RuntimeError(f"Unable to parse issued bundle response: {exc}. Body: {(r.text or '').strip()[:300]}") from exc
-                dec=self._dec_env(issued["encrypted_bundle"])
+                bundle_payload = issued.get("bundle_string") or issued.get("encrypted_bundle")
+                dec=self._dec_bundle_payload(bundle_payload)
                 return {"source":"issued","bundle_id":issued["bundle_id"],"expires_at":issued["expires_at"],
-                        "bundle_hash":issued["bundle_hash"],"profile_count":len(((dec or {}).get("runtime") or {}).get("profiles") or []),"decrypted":dec}
+                        "bundle_hash":issued["bundle_hash"],"bundle_string":issued.get("bundle_string") or "",
+                        "profile_count":len(((dec or {}).get("runtime") or {}).get("profiles") or []),"decrypted":dec}
         def _d(data,err):
             if err:
                 if isinstance(err, DeviceNotFoundError):

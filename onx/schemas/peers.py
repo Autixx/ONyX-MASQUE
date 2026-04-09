@@ -5,6 +5,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from onx.schemas.common import ONXBaseModel
 
 
+class PeerLustRouteOverride(ONXBaseModel):
+    route_map_id: str | None = None
+    egress_pool_id: str | None = None
+    egress_service_id: str | None = None
+
+
 class PeerRead(ONXBaseModel):
     id: str
     username: str
@@ -17,6 +23,7 @@ class PeerRead(ONXBaseModel):
     traffic_24h_mb: float
     traffic_month_mb: float
     config: str | None
+    lust_route_override: PeerLustRouteOverride = Field(default_factory=PeerLustRouteOverride, alias="lust_route_override_json")
 
 
 class PeerCreate(BaseModel):
@@ -32,6 +39,7 @@ class PeerCreate(BaseModel):
     traffic_24h_mb: float = Field(default=0.0, ge=0.0)
     traffic_month_mb: float = Field(default=0.0, ge=0.0)
     config: str | None = None
+    lust_route_override: PeerLustRouteOverride = Field(default_factory=PeerLustRouteOverride)
 
 
 class PeerConfigUpdate(BaseModel):
@@ -39,3 +47,4 @@ class PeerConfigUpdate(BaseModel):
 
     config: str | None = None
     lust_service_id: str | None = None
+    lust_route_override: PeerLustRouteOverride | None = None

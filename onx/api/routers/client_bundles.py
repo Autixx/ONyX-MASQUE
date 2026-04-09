@@ -43,13 +43,15 @@ def issue_bundle(
         destination_country_code=payload.destination_country_code,
         candidate_limit=payload.candidate_limit,
     )
+    encrypted_bundle = json.loads(bundle.encrypted_bundle_json)
     return BundleIssueResponse(
         bundle_id=bundle.id,
         device_id=bundle.device_id,
         bundle_format_version=bundle.bundle_format_version,
         issued_at=bundle.created_at,
         expires_at=bundle.expires_at,
-        encrypted_bundle=json.loads(bundle.encrypted_bundle_json),
+        bundle_string=bundle_service.serialize_bundle_string(encrypted_bundle),
+        encrypted_bundle=encrypted_bundle,
         bundle_hash=bundle.bundle_hash,
     )
 
@@ -64,13 +66,15 @@ def current_bundle(
     bundle = bundle_service.get_current_for_device(db, user_id=user.id, device_id=device_id)
     if bundle is None:
         return None
+    encrypted_bundle = json.loads(bundle.encrypted_bundle_json)
     return BundleRead(
         id=bundle.id,
         user_id=bundle.user_id,
         device_id=bundle.device_id,
         bundle_format_version=bundle.bundle_format_version,
         bundle_hash=bundle.bundle_hash,
-        encrypted_bundle=json.loads(bundle.encrypted_bundle_json),
+        bundle_string=bundle_service.serialize_bundle_string(encrypted_bundle),
+        encrypted_bundle=encrypted_bundle,
         expires_at=bundle.expires_at,
         invalidated_at=bundle.invalidated_at,
         created_at=bundle.created_at,

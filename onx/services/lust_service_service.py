@@ -14,6 +14,8 @@ from onx.services.lust_edge_deploy_service import lust_edge_deploy_service
 
 
 class LustServiceManager:
+    VALID_ROLES = {"standalone", "gate", "egress"}
+
     def list_services(self, db: Session, *, node_id: str | None = None) -> list[LustService]:
         query = select(LustService).order_by(LustService.created_at.desc())
         if node_id:
@@ -27,7 +29,10 @@ class LustServiceManager:
         existing = db.scalar(select(LustService).where(LustService.name == payload.name))
         if existing is not None:
             raise ValueError("LuST service with this name already exists.")
-        service = LustService(**payload.model_dump())
+        dumped = payload.model_dump()
+        dumped["role"] = self._normalize_role(dumped.get("role"))
+        dumped["country_code"] = self._normalize_country(dumped.get("country_code"))
+        service = LustService(**dumped)
         db.add(service)
         db.commit()
         db.refresh(service)
@@ -39,6 +44,10 @@ class LustServiceManager:
             existing = db.scalar(select(LustService).where(LustService.name == dumped["name"]))
             if existing is not None and existing.id != service.id:
                 raise ValueError("LuST service with this name already exists.")
+        if "role" in dumped:
+            dumped["role"] = self._normalize_role(dumped.get("role"))
+        if "country_code" in dumped:
+            dumped["country_code"] = self._normalize_country(dumped.get("country_code"))
         for field_name, value in dumped.items():
             setattr(service, field_name, value)
         db.add(service)
@@ -170,6 +179,7 @@ class LustServiceManager:
         profile["edge"] = {
             "service_id": service.id,
             "node_id": service.node_id,
+            "role": service.role,
         }
         profile["tunnel"] = {
             "mode": "wintun",
@@ -230,6 +240,7 @@ class LustServiceManager:
             "id": service.id,
             "name": service.name,
             "node_id": service.node_id,
+            "role": service.role,
             "node_name": node.name if node is not None else service.node_id,
             "state": service.state,
             "listen_host": service.listen_host,
@@ -242,6 +253,9 @@ class LustServiceManager:
             "auth_scheme": service.auth_scheme,
             "acme_email": service.acme_email,
             "client_dns_resolver": service.client_dns_resolver,
+            "country_code": service.country_code,
+            "selection_weight": service.selection_weight,
+            "maintenance_mode": bool(service.maintenance_mode),
             "description": service.description,
             "desired_config_json": service.desired_config_json,
             "health_summary_json": service.health_summary_json,
@@ -250,6 +264,18 @@ class LustServiceManager:
             "created_at": service.created_at,
             "updated_at": service.updated_at,
         }
+
+    @classmethod
+    def _normalize_role(cls, value: str | None) -> str:
+        normalized = str(value or "standalone").strip().lower() or "standalone"
+        if normalized not in cls.VALID_ROLES:
+            raise ValueError("LuST service role must be one of: standalone, gate, egress.")
+        return normalized
+
+    @staticmethod
+    def _normalize_country(value: str | None) -> str | None:
+        normalized = str(value or "").strip().upper()
+        return normalized or None
 
 
 lust_service_manager = LustServiceManager()

@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, String, Text, func
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from onx.db.base import Base
@@ -64,6 +64,7 @@ class Peer(Base):
     traffic_24h_mb: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     traffic_month_mb: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     config: Mapped[str | None] = mapped_column(Text, nullable=True)
+    lust_route_override_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(

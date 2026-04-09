@@ -23,6 +23,9 @@ class LustAccessTokenService:
         service_id: str,
         node_id: str,
         cert_fingerprint_sha256: str,
+        forced_route_map_id: str | None = None,
+        forced_egress_pool_id: str | None = None,
+        forced_egress_service_id: str | None = None,
     ) -> str:
         now = datetime.now(timezone.utc)
         payload = {
@@ -40,6 +43,12 @@ class LustAccessTokenService:
             "node_id": node_id,
             "cert_fingerprint_sha256": cert_fingerprint_sha256.lower(),
         }
+        if forced_route_map_id:
+            payload["forced_route_map_id"] = str(forced_route_map_id).strip()
+        if forced_egress_pool_id:
+            payload["forced_egress_pool_id"] = str(forced_egress_pool_id).strip()
+        if forced_egress_service_id:
+            payload["forced_egress_service_id"] = str(forced_egress_service_id).strip()
         header = {"alg": "HS256", "typ": "JWT"}
         segments = [self._encode_json(header), self._encode_json(payload)]
         signing_input = ".".join(segments).encode("ascii")

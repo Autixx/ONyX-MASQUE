@@ -32,6 +32,7 @@ class EdgeChannel:
 class EdgeSession:
     session_id: str
     claims: dict[str, Any]
+    metadata: dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     downstream: asyncio.Queue[dict[str, Any]] = field(default_factory=asyncio.Queue)
@@ -100,6 +101,14 @@ class EdgeSessionManager:
             return
         session.updated_at = datetime.now(timezone.utc)
         session.downstream.put_nowait(frame)
+
+    def stats(self) -> dict[str, Any]:
+        sessions = list(self._sessions.values())
+        upstream_sessions = sum(1 for item in sessions if item.metadata.get("upstream"))
+        return {
+            "active_sessions": len(sessions),
+            "upstream_sessions": upstream_sessions,
+        }
 
     async def poll_frame(self, session_id: str, *, timeout_seconds: float = 20.0) -> dict[str, Any] | None:
         session = self._sessions.get(str(session_id or "").strip())

@@ -18,6 +18,8 @@ from onx.db.models.job_lock import JobLock
 from onx.db.models.issued_bundle import IssuedBundle
 from onx.db.models.link import Link
 from onx.db.models.link_endpoint import LinkEndpoint
+from onx.db.models.lust_egress_pool import LustEgressPool
+from onx.db.models.lust_gateway_route_map import LustGatewayRouteMap
 from onx.db.models.lust_service import LustService
 from onx.db.models.node import Node
 from onx.db.models.node_capability import NodeCapability
@@ -70,6 +72,8 @@ __all__ = [
     "Registration",
     "Link",
     "LinkEndpoint",
+    "LustEgressPool",
+    "LustGatewayRouteMap",
     "LustService",
     "RoutePolicy",
     "DNSPolicy",

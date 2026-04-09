@@ -5,10 +5,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from onx.api.deps import get_database_session
+from onx.db.models.lust_service import LustService
 from onx.db.models.node import Node
 from onx.db.models.peer import Peer
 from onx.schemas.peers import PeerConfigUpdate, PeerCreate, PeerRead
 from onx.services.event_log_service import EventLogService
+from onx.services.lust_routing_service import lust_routing_service
 from onx.services.lust_service_service import lust_service_manager
 from onx.services.realtime_service import realtime_service
 
@@ -39,7 +41,31 @@ def create_peer(payload: PeerCreate, db: Session = Depends(get_database_session)
     node = db.get(Node, payload.node_id)
     if node is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Node not found.")
-    peer = Peer(**payload.model_dump(exclude_none=True))
+    if payload.lust_service_id:
+        service = db.get(LustService, payload.lust_service_id)
+        if service is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="LuST service not found.")
+    try:
+        lust_route_override = lust_routing_service.normalize_peer_route_override(
+            db,
+            gateway_service_id=payload.lust_service_id,
+            override=payload.lust_route_override.model_dump(mode="python"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    peer = Peer(
+        username=payload.username,
+        email=payload.email,
+        node_id=payload.node_id,
+        lust_service_id=payload.lust_service_id,
+        registered_at=payload.registered_at,
+        config_expires_at=payload.config_expires_at,
+        last_ip=payload.last_ip,
+        traffic_24h_mb=payload.traffic_24h_mb,
+        traffic_month_mb=payload.traffic_month_mb,
+        config=payload.config,
+        lust_route_override_json=lust_route_override,
+    )
     db.add(peer)
     db.commit()
     db.refresh(peer)
@@ -63,9 +89,28 @@ def update_peer_config(
     peer = db.get(Peer, peer_id)
     if peer is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Peer not found.")
-    peer.config = payload.config
-    if payload.lust_service_id is not None:
+    provided_fields = set(payload.model_fields_set)
+    if "config" in provided_fields:
+        peer.config = payload.config
+    if "lust_service_id" in provided_fields:
+        if payload.lust_service_id:
+            service = db.get(LustService, payload.lust_service_id)
+            if service is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="LuST service not found.")
         peer.lust_service_id = payload.lust_service_id
+    override_payload = peer.lust_route_override_json
+    if "lust_route_override" in provided_fields and payload.lust_route_override is not None:
+        override_payload = payload.lust_route_override.model_dump(mode="python")
+    elif "lust_service_id" in provided_fields and not peer.lust_service_id:
+        override_payload = {}
+    try:
+        peer.lust_route_override_json = lust_routing_service.normalize_peer_route_override(
+            db,
+            gateway_service_id=peer.lust_service_id,
+            override=override_payload,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     db.add(peer)
     db.commit()
     db.refresh(peer)

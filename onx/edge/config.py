@@ -14,6 +14,7 @@ class EdgeServiceConfig(BaseModel):
     id: str
     name: str
     node_id: str
+    role: str = "standalone"
     public_host: str
     public_port: int = 443
     tls_server_name: str | None = None
@@ -27,6 +28,7 @@ class EdgeTrustConfig(BaseModel):
 
     token_issuer: str = "onx-control-plane"
     token_audience: str = "onx-lust-edge"
+    upstream_token_audience: str = "onx-lust-edge-upstream"
     client_ca_cert_path: str = "/etc/onx/lust-edge/client-ca.cert.pem"
     access_token_secret_path: str = "/etc/onx/lust-edge/access-token.secret"
 
@@ -40,6 +42,7 @@ class EdgeRuntimeConfig(BaseModel):
     protocol: str = "lust-h2"
     service: EdgeServiceConfig
     trust: EdgeTrustConfig = Field(default_factory=EdgeTrustConfig)
+    routing: dict = Field(default_factory=dict)
 
     @property
     def access_token_secret(self) -> str:
@@ -58,4 +61,5 @@ def load_edge_config() -> EdgeRuntimeConfig:
         protocol=str(raw.get("protocol") or "lust-h2"),
         service=EdgeServiceConfig(**service_raw),
         trust=EdgeTrustConfig(**dict(raw.get("trust") or {})),
+        routing=dict(raw.get("routing") or {}),
     )

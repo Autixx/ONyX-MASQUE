@@ -18,6 +18,7 @@ class LustService(Base):
         nullable=False,
         index=True,
     )
+    role: Mapped[str] = mapped_column(String(32), nullable=False, default="standalone", index=True)
     state: Mapped[str] = mapped_column(String(32), nullable=False, default="planned", index=True)
     listen_host: Mapped[str] = mapped_column(String(255), nullable=False, default="0.0.0.0")
     listen_port: Mapped[int] = mapped_column(Integer, nullable=False, default=443)
@@ -29,6 +30,9 @@ class LustService(Base):
     auth_scheme: Mapped[str] = mapped_column(String(32), nullable=False, default="bearer")
     acme_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     client_dns_resolver: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    country_code: Mapped[str | None] = mapped_column(String(8), nullable=True, index=True)
+    selection_weight: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+    maintenance_mode: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     desired_config_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     health_summary_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)

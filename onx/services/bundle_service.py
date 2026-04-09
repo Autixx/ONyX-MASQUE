@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 from datetime import datetime, timedelta, timezone
@@ -25,6 +26,7 @@ from onx.services.client_device_service import client_device_service
 from onx.services.device_certificate_service import device_certificate_service
 from onx.services.dns_policy_service import DNSPolicyService
 from onx.services.lust_access_token_service import lust_access_token_service
+from onx.services.lust_routing_service import lust_routing_service
 from onx.services.lust_service_service import lust_service_manager
 from onx.services.subscription_service import subscription_service
 from onx.services.transport_package_service import transport_package_service
@@ -33,6 +35,12 @@ from onx.services.transport_package_service import transport_package_service
 class BundleService:
     def __init__(self) -> None:
         self._settings = get_settings()
+
+    @staticmethod
+    def serialize_bundle_string(envelope: dict) -> str:
+        payload = json.dumps(envelope, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+        encoded = base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+        return f"lst1.{encoded}"
 
     def issue_for_user_device(
         self,
@@ -59,7 +67,13 @@ class BundleService:
         client_device_service.assert_recently_verified(device)
 
         transport_package = transport_package_service.get_or_create_for_user(db, user)
-        profiles_check = self._build_runtime_profiles(db, user=user, device=device, transport_package=transport_package)
+        profiles_check = self._build_runtime_profiles(
+            db,
+            user=user,
+            device=device,
+            transport_package=transport_package,
+            destination_country_code=destination_country_code,
+        )
         if not profiles_check:
             transport_package_service.reconcile_for_user(db, user, transport_package)
 
@@ -122,7 +136,13 @@ class BundleService:
         candidate_limit: int,
     ) -> dict:
         transport_package = db.scalar(select(TransportPackage).where(TransportPackage.user_id == user.id))
-        runtime_profiles = self._build_runtime_profiles(db, user=user, device=device, transport_package=transport_package)
+        runtime_profiles = self._build_runtime_profiles(
+            db,
+            user=user,
+            device=device,
+            transport_package=transport_package,
+            destination_country_code=destination_country_code,
+        )
         if runtime_profiles:
             first_profile = runtime_profiles[0]
             transports = [
@@ -132,6 +152,7 @@ class BundleService:
                     "node_id": first_profile["node_id"],
                     "node_name": first_profile["node_name"],
                     "service_id": first_profile["service_id"],
+                    "service_role": first_profile.get("service_role"),
                 }
             ]
             candidates = [db.get(Node, first_profile["node_id"])] if first_profile.get("node_id") else []
@@ -228,6 +249,7 @@ class BundleService:
         user: User,
         device: Device,
         transport_package: TransportPackage | None = None,
+        destination_country_code: str | None = None,
     ) -> list[dict]:
         if transport_package is None:
             transport_package = db.scalar(select(TransportPackage).where(TransportPackage.user_id == user.id))
@@ -236,7 +258,12 @@ class BundleService:
         profiles: list[dict] = []
         if transport_package is None or not transport_package.lust_enabled:
             return profiles
-        peer = self._select_runtime_peer(db, user=user, transport_package=transport_package)
+        peer = self._select_runtime_peer(
+            db,
+            user=user,
+            transport_package=transport_package,
+            destination_country_code=destination_country_code,
+        )
         if peer is None:
             return profiles
         certificate = device_certificate_service.get_current_for_device(db, device_id=device.id)
@@ -251,6 +278,7 @@ class BundleService:
         service = db.get(LustService, peer.lust_service_id)
         if service is None or service.state != "active":
             return profiles
+        route_override = dict(peer.lust_route_override_json or {})
         token = lust_access_token_service.issue_token(
             user_id=user.id,
             device_id=device.id,
@@ -258,6 +286,9 @@ class BundleService:
             service_id=service.id,
             node_id=service.node_id,
             cert_fingerprint_sha256=certificate.fingerprint_sha256,
+            forced_route_map_id=str(route_override.get("route_map_id") or "").strip() or None,
+            forced_egress_pool_id=str(route_override.get("egress_pool_id") or "").strip() or None,
+            forced_egress_service_id=str(route_override.get("egress_service_id") or "").strip() or None,
         )
         runtime_config = lust_service_manager.render_runtime_profile(
             service,
@@ -273,6 +304,7 @@ class BundleService:
                 "priority": 1,
                 "peer_id": peer.id,
                 "service_id": peer.lust_service_id,
+                "service_role": service.role,
                 "node_id": node.id,
                 "node_name": node.name,
                 "expires_at": peer.config_expires_at.isoformat() if peer.config_expires_at else None,
@@ -282,6 +314,8 @@ class BundleService:
                     "split_tunnel_routes": list(split_tunnel_routes),
                     "mtls_required": True,
                     "certificate_fingerprint_sha256": certificate.fingerprint_sha256,
+                    "service_role": service.role,
+                    "route_override": route_override,
                 },
             }
         )
@@ -318,8 +352,15 @@ class BundleService:
                 out.append(value)
         return out
 
-    def _select_runtime_peer(self, db: Session, *, user: User, transport_package: TransportPackage | None) -> Peer | None:
-        service = self._select_lust_service(db, transport_package)
+    def _select_runtime_peer(
+        self,
+        db: Session,
+        *,
+        user: User,
+        transport_package: TransportPackage | None,
+        destination_country_code: str | None = None,
+    ) -> Peer | None:
+        service = self._select_lust_service(db, transport_package, destination_country_code=destination_country_code)
         if service is None:
             return None
         return self._select_peer_for_service(db, user=user, service_field=Peer.lust_service_id, service_id=service.id)
@@ -343,15 +384,39 @@ class BundleService:
         node = db.get(Node, node_id)
         return node is not None and node.status == NodeStatus.REACHABLE and node.traffic_suspended_at is None
 
-    def _select_lust_service(self, db: Session, transport_package: TransportPackage | None) -> LustService | None:
+    def _select_lust_service(
+        self,
+        db: Session,
+        transport_package: TransportPackage | None,
+        *,
+        destination_country_code: str | None = None,
+    ) -> LustService | None:
         if transport_package and transport_package.preferred_lust_service_id:
             preferred = db.get(LustService, transport_package.preferred_lust_service_id)
-            if preferred is not None and preferred.state == "active" and self._node_is_reachable(db, preferred.node_id):
+            if (
+                preferred is not None
+                and preferred.state == "active"
+                and self._node_is_reachable(db, preferred.node_id)
+                and not bool(preferred.maintenance_mode)
+                and str(preferred.role or "standalone").strip().lower() in {"standalone", "gate"}
+            ):
                 return preferred
-        services = list(
-            db.scalars(select(LustService).where(LustService.state == "active").order_by(LustService.updated_at.desc())).all()
+        services = list(db.scalars(select(LustService).where(LustService.state == "active").order_by(LustService.updated_at.desc())).all())
+        ordered = sorted(
+            services,
+            key=lambda item: (
+                0 if str(item.role or "").strip().lower() == "gate" and lust_routing_service.resolve_gateway_candidates(db, item, destination_country_code=destination_country_code) else 1,
+                0 if str(item.role or "").strip().lower() == "gate" else 1,
+                item.updated_at or item.created_at,
+            ),
+            reverse=False,
         )
-        for service in services:
+        for service in ordered:
+            role = str(service.role or "standalone").strip().lower()
+            if role not in {"standalone", "gate"}:
+                continue
+            if bool(service.maintenance_mode):
+                continue
             if self._node_is_reachable(db, service.node_id):
                 return service
         return None
