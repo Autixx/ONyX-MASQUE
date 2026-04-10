@@ -817,6 +817,7 @@ class WintunRunner:
         self._adapter_name = "wintun"
         self._primary_route: PrimaryRoute | None = None
         self._edge_ip: str | None = None
+        self._ipv6_disabled_interface: str | None = None
         self._log_threads: list[threading.Thread] = []
         self._recent_logs: dict[str, deque[str]] = {
             "stdout": deque(maxlen=24),
@@ -1064,6 +1065,7 @@ class WintunRunner:
         for prefix in self._config.tunnel.bypass_routes:
             self._replace_route(prefix, self._primary_route.interface_alias, self._primary_route.next_hop)
         self._replace_route("0.0.0.0/0", self._adapter_name, self._config.tunnel.gateway_v4)
+        self._disable_ipv6_on_primary_interface()
 
     def _wait_for_tunnel_ready(self) -> None:
         deadline = time.time() + 8.0
@@ -1102,12 +1104,53 @@ class WintunRunner:
         raise RuntimeError(f"LuST Wintun tunnel did not become active: {last_state or 'adapter/route missing'}")
 
     def _teardown_routes(self) -> None:
+        self._restore_ipv6_on_primary_interface()
         if self._primary_route is not None and self._edge_ip:
             self._delete_route(f"{self._edge_ip}/32", self._primary_route.interface_alias, self._primary_route.next_hop)
         if self._primary_route is not None:
             for prefix in self._config.tunnel.bypass_routes:
                 self._delete_route(prefix, self._primary_route.interface_alias, self._primary_route.next_hop)
         self._delete_route("0.0.0.0/0", self._adapter_name, self._config.tunnel.gateway_v4)
+
+    def _disable_ipv6_on_primary_interface(self) -> None:
+        if self._primary_route is None:
+            return
+        interface_alias = self._primary_route.interface_alias
+        if interface_alias.lower() == self._adapter_name.lower():
+            return
+        query_script = (
+            f"Get-NetAdapterBinding -Name {_ps_quote(interface_alias)} -ComponentID 'ms_tcpip6' -ErrorAction SilentlyContinue "
+            "| Select-Object -First 1 Enabled "
+            "| ConvertTo-Json -Compress"
+        )
+        raw = self._run_powershell(query_script, allow_failure=True)
+        if not raw:
+            raise RuntimeError(f"Unable to inspect IPv6 binding state for interface '{interface_alias}'.")
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"Unable to parse IPv6 binding state for interface '{interface_alias}': {raw}") from exc
+        enabled = parsed.get("Enabled") if isinstance(parsed, dict) else None
+        if enabled is True:
+            self._run_powershell(
+                f"Disable-NetAdapterBinding -Name {_ps_quote(interface_alias)} -ComponentID 'ms_tcpip6' -Confirm:$false | Out-Null"
+            )
+            self._ipv6_disabled_interface = interface_alias
+            self._logger.info("ipv6_disabled interface=%s", interface_alias)
+
+    def _restore_ipv6_on_primary_interface(self) -> None:
+        if not self._ipv6_disabled_interface:
+            return
+        interface_alias = self._ipv6_disabled_interface
+        self._ipv6_disabled_interface = None
+        try:
+            self._run_powershell(
+                f"Enable-NetAdapterBinding -Name {_ps_quote(interface_alias)} -ComponentID 'ms_tcpip6' -Confirm:$false | Out-Null",
+                allow_failure=True,
+            )
+            self._logger.info("ipv6_restored interface=%s", interface_alias)
+        except Exception:
+            return
 
     def _replace_route(self, prefix: str, interface_name: str, gateway: str) -> None:
         self._delete_route(prefix, interface_name, gateway)

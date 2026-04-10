@@ -86,6 +86,7 @@ APP_ROOT    = Path(__file__).resolve().parent
 PROJECT_BIN_DIR = APP_ROOT / "bin"
 ICON_DIR    = APP_ROOT / "assets" / "icons"
 AUTOSTART_TASK_NAME = "ONyX Desktop Client"
+DAEMON_SERVICE_NAME = "ONyXClientDaemon"
 APP_VERSION = "0.2.0"
 
 
@@ -274,6 +275,18 @@ def _subprocess_hidden_kwargs() -> dict:
     if platform.system() != "Windows" or not WINDOWS_CREATE_NO_WINDOW:
         return {}
     return {"creationflags": WINDOWS_CREATE_NO_WINDOW}
+
+
+def _daemon_service_exists() -> bool:
+    if platform.system() != "Windows":
+        return False
+    result = subprocess.run(
+        ["sc.exe", "query", DAEMON_SERVICE_NAME],
+        capture_output=True,
+        text=True,
+        **_subprocess_hidden_kwargs(),
+    )
+    return result.returncode == 0
 
 
 def test_api_health(base_url: str) -> dict:
@@ -1252,6 +1265,16 @@ class LocalTunnelRuntime:
             return False
         daemon_exe = daemon_executable_path()
         if daemon_exe is not None:
+            if _daemon_service_exists():
+                result = ctypes.windll.shell32.ShellExecuteW(  # type: ignore[attr-defined]
+                    None,
+                    "runas",
+                    "sc.exe",
+                    f"start {DAEMON_SERVICE_NAME}",
+                    None,
+                    0,
+                )
+                return int(result) > 32
             result = ctypes.windll.shell32.ShellExecuteW(  # type: ignore[attr-defined]
                 None,
                 "runas",

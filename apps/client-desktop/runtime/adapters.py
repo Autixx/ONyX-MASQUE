@@ -21,6 +21,10 @@ def _async_subprocess_hidden_kwargs() -> dict:
     return {"creationflags": WINDOWS_CREATE_NO_WINDOW}
 
 
+def _ps_quote(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
 @dataclass(slots=True)
 class ActiveProcessGroup:
     transport: str
@@ -75,6 +79,8 @@ class LustAdapter(BaseRuntimeAdapter):
         tunnel_name = profile.metadata.get("tunnel_name") or "onyxlust0"
         config_path = self._write_config(tunnel_name, profile.config_text or "{}", suffix=".json")
         binary = expected_binary_layout()["lust_client"]
+        if platform.system() == "Windows":
+            await self._cleanup_stale_windows_runtime()
         args = [binary, "--config", str(config_path)]
         get_logger("adapters").info("lust_connect_start profile_id=%s tunnel=%s argv=%s", profile.id, tunnel_name, args)
         proc = await asyncio.create_subprocess_exec(
@@ -133,7 +139,45 @@ class LustAdapter(BaseRuntimeAdapter):
                     raise RuntimeError(detail or f"taskkill failed for lust pid {pid}")
             else:
                 os.kill(pid, 15)
+        if platform.system() == "Windows":
+            await self._cleanup_stale_windows_runtime()
         get_logger("adapters").info("lust_disconnect_ok tunnel=%s profile_id=%s", session.tunnel_name, session.profile_id)
+
+    async def _cleanup_stale_windows_runtime(self) -> None:
+        layout = expected_binary_layout()
+        lust_path = layout.get("lust_client")
+        tun2socks_path = layout.get("tun2socks")
+        if not lust_path and not tun2socks_path:
+            return
+        script_lines = [
+            "$targets = @()",
+        ]
+        if lust_path:
+            script_lines.append(f"$targets += {_ps_quote(str(Path(lust_path).resolve()))}")
+        if tun2socks_path:
+            script_lines.append(f"$targets += {_ps_quote(str(Path(tun2socks_path).resolve()))}")
+        script_lines.extend(
+            [
+                "$normalized = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::OrdinalIgnoreCase)",
+                "foreach ($item in $targets) { [void]$normalized.Add($item) }",
+                "Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath } | ForEach-Object {",
+                "  if ($normalized.Contains($_.ExecutablePath)) {",
+                "    try { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop } catch {}",
+                "  }",
+                "}",
+            ]
+        )
+        proc = await asyncio.create_subprocess_exec(
+            "powershell",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "; ".join(script_lines),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            **_async_subprocess_hidden_kwargs(),
+        )
+        await proc.communicate()
 
 
 def build_runtime_adapters() -> dict[str, BaseRuntimeAdapter]:
