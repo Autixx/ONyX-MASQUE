@@ -126,6 +126,31 @@ window.applyLustServiceFlow = async function applyLustServiceFlow(serviceId){
     var service = lustServiceById(serviceId);
     if(service) window.showLustService(serviceId);
   }catch(err){
+    var detail = err && err.detail && typeof err.detail === 'object' ? err.detail : null;
+    if(err && err.status === 409 && detail && detail.existing_job_id){
+      openModal('Apply already queued',
+        '<div style="display:flex;gap:14px;align-items:flex-start;">'
+          +'<div style="width:28px;height:28px;min-width:28px;border-radius:999px;border:1px solid var(--ylw);color:var(--ylw);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:18px;line-height:1;">!</div>'
+          +'<div style="display:flex;flex-direction:column;gap:8px;">'
+            +'<div style="color:var(--t0);font-size:14px;">A LuST apply job is already active for this service.</div>'
+            +'<div style="color:var(--t2);font-size:13px;">Existing job ID: <span class="m">'+esc(detail.existing_job_id)+'</span></div>'
+            +'<div style="color:var(--t2);font-size:13px;">Current state: <span class="m">'+esc(detail.existing_job_state || 'unknown')+'</span></div>'
+          +'</div>'
+        +'</div>',
+        {
+          buttons:[
+            { label:'Close', className:'btn', onClick:closeModal },
+            { label:'Open Job', className:'btn pri', onClick:function(){
+                closeModal();
+                switchGroup('operations');
+                showPage('jobs');
+                refreshJobs().then(function(){ window.showJob(detail.existing_job_id); }).catch(function(){});
+              } }
+          ]
+        }
+      );
+      return;
+    }
     alert(err && err.message ? err.message : String(err));
   }
 };

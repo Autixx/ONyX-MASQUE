@@ -42,9 +42,16 @@ window.apiFetch = async function apiFetch(path, options){
     throw new Error('Unauthorized');
   }
   if(!response.ok){
-    var detail = payload && payload.detail ? payload.detail : ('HTTP '+response.status);
-    if(typeof detail === 'object'){ detail = JSON.stringify(detail); }
-    throw new Error(detail);
+    var rawDetail = payload && payload.detail ? payload.detail : ('HTTP '+response.status);
+    var detail = rawDetail;
+    if(typeof detail === 'object'){
+      detail = detail.message || JSON.stringify(detail);
+    }
+    var error = new Error(detail);
+    error.status = response.status;
+    error.payload = payload;
+    error.detail = rawDetail;
+    throw error;
   }
   return payload;
 };
