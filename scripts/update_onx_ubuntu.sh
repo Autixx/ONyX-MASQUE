@@ -58,11 +58,27 @@ ensure_node_lts() {
   if [[ "${current_major}" =~ ^[0-9]+$ ]] && (( current_major >= 20 )); then
     return
   fi
-  apt-get update
-  apt-get install -y ca-certificates curl gnupg
+  echo "  -> Installing Node.js 20 LTS..."
+  if ! apt-get update; then
+    echo "  -> Failed to update apt metadata for Node.js installation; continuing with committed dist/."
+    return 1
+  fi
+  if ! apt-get install -y ca-certificates curl gnupg; then
+    echo "  -> Failed to install Node.js prerequisites; continuing with committed dist/."
+    return 1
+  fi
+  apt-get remove -y npm libnode-dev nodejs-doc >/dev/null 2>&1 || true
+  apt-get autoremove -y >/dev/null 2>&1 || true
   mkdir -p /etc/apt/keyrings
-  curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-  apt-get install -y nodejs
+  if ! curl -fsSL https://deb.nodesource.com/setup_20.x | bash -; then
+    echo "  -> Failed to configure NodeSource repository; continuing with committed dist/."
+    return 1
+  fi
+  if ! apt-get install -y nodejs; then
+    apt-get -f install -y >/dev/null 2>&1 || true
+    echo "  -> Failed to install Node.js 20 LTS; continuing with committed dist/."
+    return 1
+  fi
 }
 
 validate_port() {
@@ -183,7 +199,7 @@ echo "  → $(git -C "${INSTALL_DIR}" log --oneline -1)"
 echo "[2/6] Building frontend..."
 WEB_ADMIN_DIR="${INSTALL_DIR}/apps/web-admin"
 if [[ -f "${WEB_ADMIN_DIR}/package.json" ]]; then
-  ensure_node_lts
+  ensure_node_lts || true
   NODE_MAJOR="$(node_major_version)"
   if [[ "${NODE_MAJOR}" =~ ^[0-9]+$ ]] && (( NODE_MAJOR >= 18 )); then
     npm --prefix "${WEB_ADMIN_DIR}" install
