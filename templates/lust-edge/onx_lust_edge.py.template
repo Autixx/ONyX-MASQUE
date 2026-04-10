@@ -421,7 +421,6 @@ class UpstreamGatewayRelay:
                     payload = response.json()
                 upstream = {
                     "member": member,
-                    "token": token,
                     "session_id": str(payload.get("session_id") or "").strip(),
                     "base_url": base_url,
                 }
@@ -438,12 +437,13 @@ class UpstreamGatewayRelay:
 
     async def forward_frame(self, session: EdgeSession, frame: dict) -> dict:
         upstream = self._require_upstream(session)
+        token = self._issue_upstream_token(session, upstream["member"])
         payload = dict(frame)
         payload["session_id"] = upstream["session_id"]
         async with httpx.AsyncClient(http2=True, verify=True, timeout=30.0) as client:
             response = await client.post(
                 f"{upstream['base_url']}{self._member_path(upstream['member'], '/upstream/frame')}",
-                headers=self._headers(upstream["token"]),
+                headers=self._headers(token),
                 json=payload,
             )
             response.raise_for_status()
@@ -451,10 +451,11 @@ class UpstreamGatewayRelay:
 
     async def poll_frame(self, session: EdgeSession, *, timeout: float) -> dict | None:
         upstream = self._require_upstream(session)
+        token = self._issue_upstream_token(session, upstream["member"])
         async with httpx.AsyncClient(http2=True, verify=True, timeout=max(10.0, timeout + 10.0)) as client:
             response = await client.get(
                 f"{upstream['base_url']}{self._member_path(upstream['member'], '/upstream/frame/poll')}",
-                headers=self._headers(upstream["token"]),
+                headers=self._headers(token),
                 params={"session_id": upstream["session_id"], "timeout": timeout},
             )
             if response.status_code == 204:
@@ -466,10 +467,11 @@ class UpstreamGatewayRelay:
         upstream = session.metadata.get("upstream")
         if not isinstance(upstream, dict) or not upstream.get("session_id"):
             return
+        token = self._issue_upstream_token(session, upstream["member"])
         async with httpx.AsyncClient(http2=True, verify=True, timeout=15.0) as client:
             response = await client.post(
                 f"{upstream['base_url']}{self._member_path(upstream['member'], '/upstream/session/close')}",
-                headers=self._headers(upstream["token"]),
+                headers=self._headers(token),
                 json={"session_id": upstream["session_id"]},
             )
             if response.status_code not in {200, 204, 404}:
