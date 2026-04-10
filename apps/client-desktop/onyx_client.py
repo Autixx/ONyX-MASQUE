@@ -689,6 +689,16 @@ class LocalTunnelRuntime:
         self._last_transfer_sample = None
         return None
 
+    def read_runtime_status(self) -> dict | None:
+        status_path = self.st.runtime_dir / "lust-client-status.json"
+        if not status_path.exists():
+            return None
+        try:
+            raw = json.loads(status_path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        return raw if isinstance(raw, dict) else None
+
     def _connect_profile(self, profile: dict) -> dict:
         transport = profile["type"]
         interface_name = self._interface_name_for(transport)
@@ -2971,7 +2981,9 @@ class DashboardScreen(QWidget):
         base = self.st.base_url; did = self.st.device_id; hdrs = self._hdrs()
 
         def _c():
-            # Auto-verify device silently before connecting
+            # Always refresh device verification, LuST client certificate, and bundle before connecting.
+            # This avoids stale token/certificate fingerprint mismatches when the server-side
+            # LuST certificate has rotated or the cached bundle was issued against an older cert.
             with httpx_client(timeout=20, base_url=base) as c:
                 ch = c.post(base + "/client/devices/challenge", json={"device_id": did}, headers=hdrs)
                 _raise_for_device(ch)
@@ -2981,6 +2993,27 @@ class DashboardScreen(QWidget):
                             headers=hdrs)
                 if vr.status_code >= 400:
                     raise RuntimeError(response_detail(vr))
+                self._ensure_lust_certificate(c, base, hdrs, did)
+                issued = c.post(base + "/client/bundles/issue", json={"device_id": did}, headers=hdrs)
+                _raise_for_device(issued)
+                try:
+                    issued_payload = issued.json()
+                except Exception as exc:
+                    raise RuntimeError(
+                        f"Unable to parse issued bundle response: {exc}. Body: {(issued.text or '').strip()[:300]}"
+                    ) from exc
+                bundle_payload = issued_payload.get("bundle_string") or issued_payload.get("encrypted_bundle")
+                dec_bundle = self._dec_bundle_payload(bundle_payload)
+                self.st.last_bundle = {
+                    "source": "issued",
+                    "bundle_id": issued_payload["bundle_id"],
+                    "expires_at": issued_payload["expires_at"],
+                    "bundle_hash": issued_payload["bundle_hash"],
+                    "bundle_string": issued_payload.get("bundle_string") or "",
+                    "profile_count": len(((dec_bundle or {}).get("runtime") or {}).get("profiles") or []),
+                    "decrypted": dec_bundle,
+                }
+                self.st.save()
             return self._runtime.connect()
 
         def _d(profile, err):
@@ -3001,6 +3034,25 @@ class DashboardScreen(QWidget):
         run_async(self, _c, _d)
 
     def _poll_runtime_stats(self):
+        status = self._runtime.read_runtime_status()
+        if status:
+            runtime_state = str(status.get("state") or "").strip().lower()
+            if runtime_state in {"degraded", "error", "stopped"} and self.st.connected:
+                self.st.connected = False
+                self.st.active_transport = ""
+                self.st.active_interface = ""
+                self.st.active_profile_id = ""
+                self.st.active_config_path = ""
+                self.st.active_runtime_mode = ""
+                self.st.rx_bytes = self.st.tx_bytes = 0
+                self.st.rx_rate = self.st.tx_rate = 0.0
+                self.st.save()
+                self.refresh()
+                detail = str(status.get("detail") or "Runtime stopped unexpectedly.")
+                self._hlbl.setText(detail[:180])
+                self.connection_state_changed.emit(False)
+                return
+
         transfer = self._runtime.read_transfer()
         if transfer is None:
             if not self.st.connected and (self.st.rx_bytes or self.st.tx_bytes or self.st.rx_rate or self.st.tx_rate):
