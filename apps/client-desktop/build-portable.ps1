@@ -98,6 +98,29 @@ function Sign-Files {
     }
 }
 
+function Write-BinaryIntegrityMetadata {
+    param([string]$BinDir)
+
+    $targets = @("lust-client.exe", "tun2socks.exe", "wintun.dll")
+    $manifestLines = @(
+        "# ONyX LuST runtime manifest",
+        "# format: <filename> <sha256>"
+    )
+
+    foreach ($name in $targets) {
+        $path = Join-Path $BinDir $name
+        if (-not (Test-Path $path)) {
+            Write-Warning "  runtime binary missing, skipping metadata: $name"
+            continue
+        }
+        $hash = (Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant()
+        Set-Content -Path ($path + ".sha256") -Value "$hash *$name" -Encoding ASCII
+        $manifestLines += "$name $hash"
+    }
+
+    Set-Content -Path (Join-Path $BinDir "manifest.txt") -Value $manifestLines -Encoding ASCII
+}
+
 # ── Step 1: PyInstaller ───────────────────────────────────────────────────────
 
 Write-Host ""
@@ -112,6 +135,8 @@ $LustClientExe = Join-Path $DistDir "lust-client.exe"
 if (-not (Test-Path $LustClientExe)) { throw "lust-client.exe not found after build" }
 New-Item -ItemType Directory -Force -Path $BundledBinDir | Out-Null
 Copy-Item $LustClientExe (Join-Path $BundledBinDir "lust-client.exe") -Force
+Write-Host "  Writing runtime manifest + SHA256 sidecars..."
+Write-BinaryIntegrityMetadata -BinDir $BundledBinDir
 
 Write-Host "  Building ONyXClient (GUI, COLLECT mode)..."
 python -m PyInstaller --noconfirm ONyXClient.spec
