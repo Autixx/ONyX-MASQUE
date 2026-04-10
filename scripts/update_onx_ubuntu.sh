@@ -44,6 +44,14 @@ fail() {
   exit 1
 }
 
+node_major_version() {
+  if ! command -v node >/dev/null 2>&1; then
+    echo 0
+    return
+  fi
+  node -p "process.versions.node.split('.')[0]" 2>/dev/null || echo 0
+}
+
 validate_port() {
   local value="$1"
   [[ "${value}" =~ ^[0-9]{1,5}$ ]] || return 1
@@ -166,9 +174,14 @@ if [[ -f "${WEB_ADMIN_DIR}/package.json" ]]; then
     apt-get update
     apt-get install -y nodejs npm
   fi
-  npm --prefix "${WEB_ADMIN_DIR}" install
-  npm --prefix "${WEB_ADMIN_DIR}" run build
-  echo "  → Frontend built."
+  NODE_MAJOR="$(node_major_version)"
+  if [[ "${NODE_MAJOR}" =~ ^[0-9]+$ ]] && (( NODE_MAJOR >= 18 )); then
+    npm --prefix "${WEB_ADMIN_DIR}" install
+    npm --prefix "${WEB_ADMIN_DIR}" run build
+    echo "  → Frontend built."
+  else
+    echo "  → Skipping frontend build: node >= 18 is required, current major=${NODE_MAJOR}. Using committed dist/."
+  fi
 else
   echo "  → npm not found, skipping frontend build (pre-built dist will be used)."
 fi

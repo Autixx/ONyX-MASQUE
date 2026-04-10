@@ -136,6 +136,14 @@ validate_name() {
   [[ "${value}" =~ ^[a-z_][a-z0-9_]{0,62}$ ]]
 }
 
+node_major_version() {
+  if ! command -v node >/dev/null 2>&1; then
+    echo 0
+    return
+  fi
+  node -p "process.versions.node.split('.')[0]" 2>/dev/null || echo 0
+}
+
 sync_git_checkout() {
   local repo_url="$1"
   local git_ref="$2"
@@ -520,8 +528,13 @@ sync_git_checkout "${REPO_URL}" "${GIT_REF}" "${INSTALL_DIR}"
 
 if [[ "${WEB_UI_ENABLED}" == "true" && -f "${INSTALL_DIR}/apps/web-admin/package.json" ]]; then
   echo "[2.5/9] Building frontend..."
-  npm --prefix "${INSTALL_DIR}/apps/web-admin" install
-  npm --prefix "${INSTALL_DIR}/apps/web-admin" run build
+  NODE_MAJOR="$(node_major_version)"
+  if [[ "${NODE_MAJOR}" =~ ^[0-9]+$ ]] && (( NODE_MAJOR >= 18 )); then
+    npm --prefix "${INSTALL_DIR}/apps/web-admin" install
+    npm --prefix "${INSTALL_DIR}/apps/web-admin" run build
+  else
+    echo "  -> Skipping frontend build: node >= 18 is required, current major=${NODE_MAJOR}. Using committed dist/."
+  fi
 fi
 
 echo "[3/9] Preparing ONX config and environment..."
