@@ -16,6 +16,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TextIO
@@ -817,6 +818,10 @@ class WintunRunner:
         self._primary_route: PrimaryRoute | None = None
         self._edge_ip: str | None = None
         self._log_threads: list[threading.Thread] = []
+        self._recent_logs: dict[str, deque[str]] = {
+            "stdout": deque(maxlen=24),
+            "stderr": deque(maxlen=24),
+        }
 
     def start(self, *, socks_host: str, socks_port: int) -> dict[str, Any]:
         if platform.system() != "Windows":
@@ -864,6 +869,8 @@ class WintunRunner:
             self._wait_for_adapter(desired_name)
         self._adapter_name = desired_name
         self._configure_interface()
+        time.sleep(1.0)
+        self.ensure_running()
         return {
             "mode": "wintun",
             "interface": self._adapter_name,
@@ -879,6 +886,9 @@ class WintunRunner:
             raise RuntimeError("Wintun runtime is not running.")
         code = self._process.poll()
         if code is not None:
+            detail = self._recent_process_output()
+            if detail:
+                raise RuntimeError(f"tun2socks exited unexpectedly with code {code}: {detail}")
             raise RuntimeError(f"tun2socks exited unexpectedly with code {code}")
 
     def stop(self) -> None:
@@ -903,6 +913,7 @@ class WintunRunner:
                 for line in iter(stream.readline, ""):
                     text = line.strip()
                     if text:
+                        self._recent_logs[stream_name].append(text)
                         self._logger.debug("tun2socks_%s %s", stream_name, text)
             except Exception:
                 return
@@ -910,6 +921,14 @@ class WintunRunner:
         thread = threading.Thread(target=_run, name=f"tun2socks-{stream_name}", daemon=True)
         thread.start()
         self._log_threads.append(thread)
+
+    def _recent_process_output(self) -> str:
+        stderr = list(self._recent_logs.get("stderr") or [])
+        stdout = list(self._recent_logs.get("stdout") or [])
+        combined = stderr if stderr else stdout
+        if not combined:
+            return ""
+        return " | ".join(combined[-6:])
 
     def _ensure_admin(self) -> None:
         result = self._run_powershell("[bool](([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))")
