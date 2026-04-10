@@ -161,7 +161,11 @@ echo "  → $(git -C "${INSTALL_DIR}" log --oneline -1)"
 
 echo "[2/6] Building frontend..."
 WEB_ADMIN_DIR="${INSTALL_DIR}/apps/web-admin"
-if command -v npm &>/dev/null && [[ -f "${WEB_ADMIN_DIR}/package.json" ]]; then
+if [[ -f "${WEB_ADMIN_DIR}/package.json" ]]; then
+  if ! command -v npm &>/dev/null; then
+    apt-get update
+    apt-get install -y nodejs npm
+  fi
   npm --prefix "${WEB_ADMIN_DIR}" install
   npm --prefix "${WEB_ADMIN_DIR}" run build
   echo "  → Frontend built."

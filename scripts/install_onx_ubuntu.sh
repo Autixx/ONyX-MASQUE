@@ -498,6 +498,8 @@ apt-get install -y \
   ca-certificates \
   curl \
   git \
+  nodejs \
+  npm \
   openssl \
   python3 \
   python3-dev \
@@ -515,6 +517,12 @@ fi
 echo "[2/9] Fetching project source..."
 sync_git_checkout "${REPO_URL}" "${GIT_REF}" "${INSTALL_DIR}"
 [[ -f "${INSTALL_DIR}/requirements-onx.txt" ]] || fail "requirements-onx.txt not found in ${INSTALL_DIR}"
+
+if [[ "${WEB_UI_ENABLED}" == "true" && -f "${INSTALL_DIR}/apps/web-admin/package.json" ]]; then
+  echo "[2.5/9] Building frontend..."
+  npm --prefix "${INSTALL_DIR}/apps/web-admin" install
+  npm --prefix "${INSTALL_DIR}/apps/web-admin" run build
+fi
 
 echo "[3/9] Preparing ONX config and environment..."
 mkdir -p "${CONFIG_DIR}"
