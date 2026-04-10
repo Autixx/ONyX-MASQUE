@@ -826,6 +826,7 @@ class WintunRunner:
     def start(self, *, socks_host: str, socks_port: int) -> dict[str, Any]:
         if platform.system() != "Windows":
             raise RuntimeError("LuST Wintun mode is only supported on Windows.")
+        self._require_installed_package()
         tun2socks_path = _runtime_binary("tun2socks.exe")
         wintun_dll_path = _runtime_binary("wintun.dll")
         if not tun2socks_path.exists():
@@ -870,6 +871,7 @@ class WintunRunner:
         self._adapter_name = desired_name
         self._configure_interface()
         time.sleep(1.0)
+        self._wait_for_tunnel_ready()
         self.ensure_running()
         return {
             "mode": "wintun",
@@ -880,6 +882,24 @@ class WintunRunner:
             "edge_bypass_ip": self._edge_ip,
             "tun2socks_pid": self._process.pid if self._process and self._process.pid is not None else None,
         }
+
+    def _require_installed_package(self) -> None:
+        if not getattr(sys, "frozen", False):
+            return
+        exe_dir = Path(sys.executable).resolve().parent
+        candidates = [
+            os.environ.get("ProgramW6432", ""),
+            os.environ.get("ProgramFiles", ""),
+            os.environ.get("ProgramFiles(x86)", ""),
+        ]
+        install_roots = [Path(item).resolve() for item in candidates if item]
+        for root in install_roots:
+            try:
+                exe_dir.relative_to(root)
+                return
+            except ValueError:
+                continue
+        raise RuntimeError("LuST Wintun mode requires the installed ONyX Client package. Portable builds support proxy mode only.")
 
     def ensure_running(self) -> None:
         if self._process is None:
@@ -1044,6 +1064,42 @@ class WintunRunner:
         for prefix in self._config.tunnel.bypass_routes:
             self._replace_route(prefix, self._primary_route.interface_alias, self._primary_route.next_hop)
         self._replace_route("0.0.0.0/0", self._adapter_name, self._config.tunnel.gateway_v4)
+
+    def _wait_for_tunnel_ready(self) -> None:
+        deadline = time.time() + 8.0
+        last_state = ""
+        while time.time() < deadline:
+            self.ensure_running()
+            adapter_json = self._run_powershell(
+                f"Get-NetAdapter -Name {_ps_quote(self._adapter_name)} -ErrorAction SilentlyContinue | "
+                "Select-Object -First 1 Name,Status,ifIndex | ConvertTo-Json -Compress",
+                allow_failure=True,
+            )
+            route_json = self._run_powershell(
+                f"Get-NetRoute -AddressFamily IPv4 -InterfaceAlias {_ps_quote(self._adapter_name)} "
+                "-DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | "
+                "Select-Object -First 1 DestinationPrefix,NextHop,RouteMetric | ConvertTo-Json -Compress",
+                allow_failure=True,
+            )
+            adapter_ok = False
+            route_ok = False
+            if adapter_json:
+                try:
+                    parsed = json.loads(adapter_json)
+                    adapter_ok = str(parsed.get("Name") or "").strip().lower() == self._adapter_name.lower()
+                except json.JSONDecodeError:
+                    adapter_ok = False
+            if route_json:
+                try:
+                    parsed = json.loads(route_json)
+                    route_ok = str(parsed.get("DestinationPrefix") or "").strip() == "0.0.0.0/0"
+                except json.JSONDecodeError:
+                    route_ok = False
+            if adapter_ok and route_ok:
+                return
+            last_state = f"adapter={adapter_json or 'missing'} route={route_json or 'missing'}"
+            time.sleep(0.5)
+        raise RuntimeError(f"LuST Wintun tunnel did not become active: {last_state or 'adapter/route missing'}")
 
     def _teardown_routes(self) -> None:
         if self._primary_route is not None and self._edge_ip:
