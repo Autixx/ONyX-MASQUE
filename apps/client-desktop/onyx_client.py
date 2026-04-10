@@ -1314,6 +1314,24 @@ class LocalTunnelRuntime:
             if self.st.lust_tls_private_key_path:
                 mtls["client_key_path"] = self.st.lust_tls_private_key_path
             parsed["mtls"] = mtls
+            dns_policy = self.dns_policy()
+            tunnel = dict(parsed.get("tunnel") or {})
+            dns = dict(parsed.get("dns") or {})
+            use_local_dns = bool(self._local_dns) and not bool(dns_policy.get("force_all")) and not bool(dns_policy.get("force_doh"))
+            if use_local_dns:
+                tunnel["dns_servers"] = list(self._local_dns)
+                bypass_routes = list(tunnel.get("bypass_routes") or [])
+                for resolver in self._local_dns:
+                    resolver = str(resolver or "").strip()
+                    if not resolver:
+                        continue
+                    cidr = resolver if "/" in resolver else f"{resolver}/32"
+                    if cidr not in bypass_routes:
+                        bypass_routes.append(cidr)
+                tunnel["bypass_routes"] = bypass_routes
+                dns["resolver"] = self._local_dns[0]
+            parsed["dns"] = dns
+            parsed["tunnel"] = tunnel
             return json.dumps(parsed, separators=(",", ":"), ensure_ascii=True)
 
         apply_payload = {
