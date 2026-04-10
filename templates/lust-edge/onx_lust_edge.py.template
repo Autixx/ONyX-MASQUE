@@ -11,6 +11,7 @@ import secrets
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import unquote
 
 import httpx
 from fastapi import FastAPI, Header, HTTPException, Query, Request, status
@@ -38,6 +39,28 @@ def _extract_bearer_token(authorization: str | None) -> str | None:
 
 def _normalize_fingerprint(value: str | None) -> str:
     return str(value or "").strip().replace(":", "").lower()
+
+
+def _fingerprint_from_client_cert(value: str | None) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    pem = unquote(raw).strip()
+    if not pem:
+        return ""
+    body: list[str] = []
+    for line in pem.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("-----BEGIN ") or stripped.startswith("-----END "):
+            continue
+        body.append(stripped)
+    if not body:
+        return ""
+    try:
+        der = base64.b64decode("".join(body))
+    except Exception:
+        return ""
+    return hashlib.sha256(der).hexdigest().lower()
 
 
 @dataclass(slots=True)
@@ -550,7 +573,7 @@ def verify_signed_token(config: EdgeRuntimeConfig, token: str) -> dict:
     return payload
 
 
-def resolve_client_claims(config: EdgeRuntimeConfig, *, authorization: str | None, client_verify: str | None, client_fingerprint: str | None) -> dict:
+def resolve_client_claims(config: EdgeRuntimeConfig, *, authorization: str | None, client_verify: str | None, client_fingerprint: str | None, client_cert: str | None) -> dict:
     token = _extract_bearer_token(authorization)
     if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing LuST bearer token.")
@@ -561,7 +584,7 @@ def resolve_client_claims(config: EdgeRuntimeConfig, *, authorization: str | Non
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unexpected LuST token audience.")
     if str(claims.get("typ") or "") != "lust_access":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unexpected LuST token type.")
-    presented = _normalize_fingerprint(client_fingerprint)
+    presented = _fingerprint_from_client_cert(client_cert) or _normalize_fingerprint(client_fingerprint)
     expected = _normalize_fingerprint(claims.get("cert_fingerprint_sha256"))
     if not presented or presented != expected:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Client certificate fingerprint mismatch.")
@@ -621,8 +644,9 @@ def create_app() -> FastAPI:
         authorization: str | None = Header(default=None),
         x_ssl_client_verify: str | None = Header(default=None),
         x_ssl_client_fingerprint: str | None = Header(default=None),
+        x_ssl_client_cert: str | None = Header(default=None),
     ) -> dict:
-        claims = resolve_client_claims(config, authorization=authorization, client_verify=x_ssl_client_verify, client_fingerprint=x_ssl_client_fingerprint)
+        claims = resolve_client_claims(config, authorization=authorization, client_verify=x_ssl_client_verify, client_fingerprint=x_ssl_client_fingerprint, client_cert=x_ssl_client_cert)
         return serialize_session(config, claims)
 
     @app.post(f"{config.service.path}/session/open", status_code=status.HTTP_200_OK)
@@ -630,8 +654,9 @@ def create_app() -> FastAPI:
         authorization: str | None = Header(default=None),
         x_ssl_client_verify: str | None = Header(default=None),
         x_ssl_client_fingerprint: str | None = Header(default=None),
+        x_ssl_client_cert: str | None = Header(default=None),
     ) -> dict:
-        claims = resolve_client_claims(config, authorization=authorization, client_verify=x_ssl_client_verify, client_fingerprint=x_ssl_client_fingerprint)
+        claims = resolve_client_claims(config, authorization=authorization, client_verify=x_ssl_client_verify, client_fingerprint=x_ssl_client_fingerprint, client_cert=x_ssl_client_cert)
         session = EDGE_SESSION_MANAGER.open_session(claims)
         if upstream_relay.enabled():
             try:
@@ -664,8 +689,9 @@ def create_app() -> FastAPI:
         authorization: str | None = Header(default=None),
         x_ssl_client_verify: str | None = Header(default=None),
         x_ssl_client_fingerprint: str | None = Header(default=None),
+        x_ssl_client_cert: str | None = Header(default=None),
     ) -> dict:
-        claims = resolve_client_claims(config, authorization=authorization, client_verify=x_ssl_client_verify, client_fingerprint=x_ssl_client_fingerprint)
+        claims = resolve_client_claims(config, authorization=authorization, client_verify=x_ssl_client_verify, client_fingerprint=x_ssl_client_fingerprint, client_cert=x_ssl_client_cert)
         session_id = str(payload.get("session_id") or "").strip()
         session = EDGE_SESSION_MANAGER.get_session(session_id, claims)
         if session is None:
@@ -690,8 +716,9 @@ def create_app() -> FastAPI:
         authorization: str | None = Header(default=None),
         x_ssl_client_verify: str | None = Header(default=None),
         x_ssl_client_fingerprint: str | None = Header(default=None),
+        x_ssl_client_cert: str | None = Header(default=None),
     ):
-        claims = resolve_client_claims(config, authorization=authorization, client_verify=x_ssl_client_verify, client_fingerprint=x_ssl_client_fingerprint)
+        claims = resolve_client_claims(config, authorization=authorization, client_verify=x_ssl_client_verify, client_fingerprint=x_ssl_client_fingerprint, client_cert=x_ssl_client_cert)
         session = EDGE_SESSION_MANAGER.get_session(session_id, claims)
         if session is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="LuST session not found.")
@@ -714,8 +741,9 @@ def create_app() -> FastAPI:
         authorization: str | None = Header(default=None),
         x_ssl_client_verify: str | None = Header(default=None),
         x_ssl_client_fingerprint: str | None = Header(default=None),
+        x_ssl_client_cert: str | None = Header(default=None),
     ) -> Response:
-        claims = resolve_client_claims(config, authorization=authorization, client_verify=x_ssl_client_verify, client_fingerprint=x_ssl_client_fingerprint)
+        claims = resolve_client_claims(config, authorization=authorization, client_verify=x_ssl_client_verify, client_fingerprint=x_ssl_client_fingerprint, client_cert=x_ssl_client_cert)
         session_id = str(payload.get("session_id") or "").strip()
         session = EDGE_SESSION_MANAGER.get_session(session_id, claims)
         if session is not None:
@@ -732,8 +760,9 @@ def create_app() -> FastAPI:
         authorization: str | None = Header(default=None),
         x_ssl_client_verify: str | None = Header(default=None),
         x_ssl_client_fingerprint: str | None = Header(default=None),
+        x_ssl_client_cert: str | None = Header(default=None),
     ):
-        claims = resolve_client_claims(config, authorization=authorization, client_verify=x_ssl_client_verify, client_fingerprint=x_ssl_client_fingerprint)
+        claims = resolve_client_claims(config, authorization=authorization, client_verify=x_ssl_client_verify, client_fingerprint=x_ssl_client_fingerprint, client_cert=x_ssl_client_cert)
         session = serialize_session(config, claims)
 
         async def _event_source():

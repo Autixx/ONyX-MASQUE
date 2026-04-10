@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import json
 from datetime import datetime, timezone
+from urllib.parse import unquote
 
 import httpx
 from fastapi import FastAPI, Header, HTTPException, Query, Request, status
@@ -55,12 +56,35 @@ def _normalize_fingerprint(value: str | None) -> str:
     return str(value or "").strip().replace(":", "").lower()
 
 
+def _fingerprint_from_client_cert(value: str | None) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    pem = unquote(raw).strip()
+    if not pem:
+        return ""
+    body = []
+    for line in pem.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("-----BEGIN ") or stripped.startswith("-----END "):
+            continue
+        body.append(stripped)
+    if not body:
+        return ""
+    try:
+        der = base64.b64decode("".join(body))
+    except Exception:  # noqa: BLE001
+        return ""
+    return hashlib.sha256(der).hexdigest().lower()
+
+
 def _resolve_client_claims(
     config: EdgeRuntimeConfig,
     *,
     authorization: str | None,
     client_verify: str | None,
     client_fingerprint: str | None,
+    client_cert: str | None,
 ):
     token = _extract_bearer_token(authorization)
     if not token:
@@ -72,7 +96,7 @@ def _resolve_client_claims(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unexpected LuST token audience.")
     if str(claims.get("typ") or "") != "lust_access":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unexpected LuST token type.")
-    presented_fingerprint = _normalize_fingerprint(client_fingerprint)
+    presented_fingerprint = _fingerprint_from_client_cert(client_cert) or _normalize_fingerprint(client_fingerprint)
     expected_fingerprint = _normalize_fingerprint(claims.get("cert_fingerprint_sha256"))
     if not presented_fingerprint or presented_fingerprint != expected_fingerprint:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Client certificate fingerprint mismatch.")
@@ -162,6 +186,7 @@ def create_app(config: EdgeRuntimeConfig | None = None) -> FastAPI:
         authorization: str | None = Header(default=None),
         x_ssl_client_verify: str | None = Header(default=None),
         x_ssl_client_fingerprint: str | None = Header(default=None),
+        x_ssl_client_cert: str | None = Header(default=None),
     ) -> LustClientSessionRead:
         _require_configured()
         claims = _resolve_client_claims(
@@ -169,6 +194,7 @@ def create_app(config: EdgeRuntimeConfig | None = None) -> FastAPI:
             authorization=authorization,
             client_verify=x_ssl_client_verify,
             client_fingerprint=x_ssl_client_fingerprint,
+            client_cert=x_ssl_client_cert,
         )
         return _serialize_session(edge_config, claims)
 
@@ -177,6 +203,7 @@ def create_app(config: EdgeRuntimeConfig | None = None) -> FastAPI:
         authorization: str | None = Header(default=None),
         x_ssl_client_verify: str | None = Header(default=None),
         x_ssl_client_fingerprint: str | None = Header(default=None),
+        x_ssl_client_cert: str | None = Header(default=None),
     ) -> dict:
         _require_configured()
         claims = _resolve_client_claims(
@@ -184,6 +211,7 @@ def create_app(config: EdgeRuntimeConfig | None = None) -> FastAPI:
             authorization=authorization,
             client_verify=x_ssl_client_verify,
             client_fingerprint=x_ssl_client_fingerprint,
+            client_cert=x_ssl_client_cert,
         )
         session = edge_session_manager.open_session(claims)
         if upstream_relay.enabled():
@@ -217,6 +245,7 @@ def create_app(config: EdgeRuntimeConfig | None = None) -> FastAPI:
         authorization: str | None = Header(default=None),
         x_ssl_client_verify: str | None = Header(default=None),
         x_ssl_client_fingerprint: str | None = Header(default=None),
+        x_ssl_client_cert: str | None = Header(default=None),
     ) -> dict:
         _require_configured()
         claims = _resolve_client_claims(
@@ -224,6 +253,7 @@ def create_app(config: EdgeRuntimeConfig | None = None) -> FastAPI:
             authorization=authorization,
             client_verify=x_ssl_client_verify,
             client_fingerprint=x_ssl_client_fingerprint,
+            client_cert=x_ssl_client_cert,
         )
         session_id = str(payload.get("session_id") or "").strip()
         session = edge_session_manager.get_session(session_id, claims)
@@ -249,6 +279,7 @@ def create_app(config: EdgeRuntimeConfig | None = None) -> FastAPI:
         authorization: str | None = Header(default=None),
         x_ssl_client_verify: str | None = Header(default=None),
         x_ssl_client_fingerprint: str | None = Header(default=None),
+        x_ssl_client_cert: str | None = Header(default=None),
     ):
         _require_configured()
         claims = _resolve_client_claims(
@@ -256,6 +287,7 @@ def create_app(config: EdgeRuntimeConfig | None = None) -> FastAPI:
             authorization=authorization,
             client_verify=x_ssl_client_verify,
             client_fingerprint=x_ssl_client_fingerprint,
+            client_cert=x_ssl_client_cert,
         )
         session = edge_session_manager.get_session(session_id, claims)
         if session is None:
@@ -279,6 +311,7 @@ def create_app(config: EdgeRuntimeConfig | None = None) -> FastAPI:
         authorization: str | None = Header(default=None),
         x_ssl_client_verify: str | None = Header(default=None),
         x_ssl_client_fingerprint: str | None = Header(default=None),
+        x_ssl_client_cert: str | None = Header(default=None),
     ) -> Response:
         _require_configured()
         claims = _resolve_client_claims(
@@ -286,6 +319,7 @@ def create_app(config: EdgeRuntimeConfig | None = None) -> FastAPI:
             authorization=authorization,
             client_verify=x_ssl_client_verify,
             client_fingerprint=x_ssl_client_fingerprint,
+            client_cert=x_ssl_client_cert,
         )
         session_id = str(payload.get("session_id") or "").strip()
         session = edge_session_manager.get_session(session_id, claims)
@@ -303,6 +337,7 @@ def create_app(config: EdgeRuntimeConfig | None = None) -> FastAPI:
         authorization: str | None = Header(default=None),
         x_ssl_client_verify: str | None = Header(default=None),
         x_ssl_client_fingerprint: str | None = Header(default=None),
+        x_ssl_client_cert: str | None = Header(default=None),
     ):
         _require_configured()
         claims = _resolve_client_claims(
@@ -310,6 +345,7 @@ def create_app(config: EdgeRuntimeConfig | None = None) -> FastAPI:
             authorization=authorization,
             client_verify=x_ssl_client_verify,
             client_fingerprint=x_ssl_client_fingerprint,
+            client_cert=x_ssl_client_cert,
         )
         session = _serialize_session(edge_config, claims)
 

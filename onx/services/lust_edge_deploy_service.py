@@ -130,6 +130,7 @@ class LustEdgeDeployService:
         proxy_set_header Host $host;
         proxy_set_header X-SSL-Client-Verify $ssl_client_verify;
         proxy_set_header X-SSL-Client-Fingerprint $ssl_client_fingerprint;
+        proxy_set_header X-SSL-Client-Cert $ssl_client_escaped_cert;
         proxy_set_header X-SSL-Client-Serial $ssl_client_serial;
     }}
 
@@ -141,6 +142,7 @@ class LustEdgeDeployService:
         proxy_set_header Host $host;
         proxy_set_header X-SSL-Client-Verify $ssl_client_verify;
         proxy_set_header X-SSL-Client-Fingerprint $ssl_client_fingerprint;
+        proxy_set_header X-SSL-Client-Cert $ssl_client_escaped_cert;
         proxy_set_header X-SSL-Client-Serial $ssl_client_serial;
         proxy_set_header Connection "";
     }}
