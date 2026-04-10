@@ -83,7 +83,10 @@ class UpstreamGatewayRelay:
             if response.status_code == 204:
                 return None
             response.raise_for_status()
-            return response.json()
+            payload = response.json()
+            if isinstance(payload, dict) and str(payload.get("op") or "").strip().lower() == "noop":
+                return None
+            return payload
 
     async def close_session(self, session: EdgeSession) -> None:
         upstream = session.metadata.get("upstream")

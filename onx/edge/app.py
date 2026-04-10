@@ -421,7 +421,7 @@ def create_app(config: EdgeRuntimeConfig | None = None) -> FastAPI:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="LuST upstream session not found.")
         frame = await edge_session_manager.poll_frame(session.session_id, timeout_seconds=timeout)
         if frame is None:
-            return Response(status_code=status.HTTP_204_NO_CONTENT)
+            return JSONResponse(status_code=status.HTTP_200_OK, content={"ok": True, "op": "noop"})
         return JSONResponse(status_code=status.HTTP_200_OK, content=frame)
 
     @app.post(f"{edge_config.service.path}/upstream/session/close", status_code=status.HTTP_204_NO_CONTENT)
