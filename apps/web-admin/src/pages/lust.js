@@ -14,6 +14,7 @@ window.renderLustServices = function renderLustServices(){
     return '<tr onclick="showLustService(\''+esc(service.id)+'\')" style="cursor:pointer">'
       +'<td class="m">'+esc(service.name)+'</td>'
       +'<td>'+esc(service.node_name || nById(service.node_id).name || service.node_id)+'</td>'
+      +'<td>'+esc(service.role || 'standalone')+'</td>'
       +'<td>'+esc(service.public_host || '-')+'</td>'
       +'<td>'+esc(String(service.public_port || service.listen_port || '-'))+'</td>'
       +'<td>'+esc(service.h2_path || '-')+'</td>'
@@ -59,6 +60,11 @@ window.openLustServiceModal = function openLustServiceModal(serviceId){
   var body = '<form id="lustServiceForm"><div class="modal-grid">'
     +formInput('Name', 'name', service ? service.name : '', {required:true})
     +formSelect('Node', 'node_id', service ? service.node_id : (NODES[0] ? NODES[0].id : ''), nodeOptions, {help:'Managed node that terminates LuST.'})
+    +formSelect('Role', 'role', service ? (service.role || 'standalone') : 'standalone', [
+      {value:'standalone', label:'standalone'},
+      {value:'gate', label:'gate'},
+      {value:'egress', label:'egress'}
+    ], {help:'standalone = single-hop, gate = ingress node, egress = exit node'})
     +formInput('Listen host', 'listen_host', service ? (service.listen_host || '0.0.0.0') : '0.0.0.0', {required:true})
     +formInput('Listen port', 'listen_port', service ? String(service.listen_port || 443) : '443', {required:true, type:'number'})
     +formInput('Public host', 'public_host', service ? (service.public_host || '') : '', {required:true})
@@ -82,6 +88,7 @@ window.saveLustServiceForm = async function saveLustServiceForm(fd, serviceId){
   var payload = {
     name: fd.get('name'),
     node_id: fd.get('node_id'),
+    role: fd.get('role') || 'standalone',
     listen_host: fd.get('listen_host'),
     listen_port: parseInt(fd.get('listen_port'), 10) || 443,
     public_host: fd.get('public_host'),
