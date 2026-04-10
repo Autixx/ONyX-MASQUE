@@ -508,7 +508,23 @@ class EdgeController:
                     data=_b64decode(frame.get("data_b64")),
                 )
             return
-        if op in {"close", "error"}:
+        if op == "error":
+            network = str(frame.get("network") or "").strip() or "unknown"
+            detail = str(frame.get("detail") or "").strip() or "remote error"
+            self._logger.warning("remote_channel_error channel_id=%s network=%s detail=%s", channel_id, network, detail)
+            self.close_channel(channel_id)
+            return
+        if op == "close":
+            network = str(frame.get("network") or "").strip() or "unknown"
+            detail = str(frame.get("detail") or "").strip() or "closed"
+            byte_count = int(frame.get("bytes") or 0)
+            self._logger.info(
+                "remote_channel_close channel_id=%s network=%s bytes=%s detail=%s",
+                channel_id,
+                network,
+                byte_count,
+                detail,
+            )
             self.close_channel(channel_id)
 
     def _request_json(self, method: str, path: str, *, json_body: dict[str, Any] | None = None, params: dict[str, Any] | None = None, allow_empty: bool = False) -> dict[str, Any]:

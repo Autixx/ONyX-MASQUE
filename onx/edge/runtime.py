@@ -212,11 +212,14 @@ class EdgeSessionManager:
             channel.udp_transport.close()
 
     async def _tcp_reader_loop(self, session_id: str, channel_id: str, reader: asyncio.StreamReader, host: str, port: int) -> None:
+        bytes_read = 0
+        close_detail = "eof"
         try:
             while True:
                 chunk = await reader.read(65535)
                 if not chunk:
                     break
+                bytes_read += len(chunk)
                 self.queue_frame(
                     session_id,
                     {
@@ -228,6 +231,7 @@ class EdgeSessionManager:
                     },
                 )
         except Exception as exc:
+            close_detail = f"error:{exc}"
             self.queue_frame(
                 session_id,
                 {
@@ -244,6 +248,8 @@ class EdgeSessionManager:
                     "op": "close",
                     "channel_id": channel_id,
                     "network": "tcp",
+                    "detail": close_detail,
+                    "bytes": bytes_read,
                 },
             )
             session = self._sessions.get(session_id)
