@@ -16,6 +16,7 @@ a = Analysis(
         'runtime.paths',
         'runtime.service',
         'runtime.adapters',
+        'win32timezone',
     ],
     hookspath=[],
     hooksconfig={},
