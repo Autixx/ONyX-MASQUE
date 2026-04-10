@@ -991,9 +991,12 @@ def _safe_update_screen(install_dir: Path) -> None:
         return
     if not _prompt_bool("Run safe update now?", False):
         return
+    command = ["bash", str(update_script), "--ref", "main"]
+    if os.name != "nt" and os.geteuid() != 0:
+        command = ["sudo", *command]
     _show_command_screen(
         "ONX / Safe Update",
-        ["bash", str(update_script), "--ref", "main"],
+        command,
     )
 
 

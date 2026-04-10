@@ -52,6 +52,19 @@ node_major_version() {
   node -p "process.versions.node.split('.')[0]" 2>/dev/null || echo 0
 }
 
+ensure_node_lts() {
+  local current_major
+  current_major="$(node_major_version)"
+  if [[ "${current_major}" =~ ^[0-9]+$ ]] && (( current_major >= 20 )); then
+    return
+  fi
+  apt-get update
+  apt-get install -y ca-certificates curl gnupg
+  mkdir -p /etc/apt/keyrings
+  curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+  apt-get install -y nodejs
+}
+
 validate_port() {
   local value="$1"
   [[ "${value}" =~ ^[0-9]{1,5}$ ]] || return 1
@@ -170,10 +183,7 @@ echo "  → $(git -C "${INSTALL_DIR}" log --oneline -1)"
 echo "[2/6] Building frontend..."
 WEB_ADMIN_DIR="${INSTALL_DIR}/apps/web-admin"
 if [[ -f "${WEB_ADMIN_DIR}/package.json" ]]; then
-  if ! command -v npm &>/dev/null; then
-    apt-get update
-    apt-get install -y nodejs npm
-  fi
+  ensure_node_lts
   NODE_MAJOR="$(node_major_version)"
   if [[ "${NODE_MAJOR}" =~ ^[0-9]+$ ]] && (( NODE_MAJOR >= 18 )); then
     npm --prefix "${WEB_ADMIN_DIR}" install
