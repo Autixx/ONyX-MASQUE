@@ -114,7 +114,7 @@ class LustEdgeDeployService:
         if not path.startswith("/"):
             path = "/" + path
         path_prefix = path.rstrip("/") + "/"
-        listen_port = int(service.listen_port or 443)
+        listen_port = int(service.public_port or 443)
         return f"""server {{
     listen {listen_port} ssl http2;
     server_name {server_name};
