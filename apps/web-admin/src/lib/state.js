@@ -17,6 +17,8 @@ window.REFERRAL_POOLS      = [];
 window.DEVICES             = [];
 window.TRANSPORT_PACKAGES  = [];
 window.LUST_SERVICES       = [];
+window.LUST_EGRESS_POOLS   = [];
+window.LUST_ROUTE_MAPS     = [];
 window.TRANSIT_POLICIES    = [];
 window.NODE_TRAFFIC        = [];
 window.AUDIT_EVTS          = [];
@@ -146,6 +148,8 @@ window.balancerById = function balancerById(id){ return window.BALANCERS.find(fu
 window.transitPolicyById = function transitPolicyById(id){ return window.TRANSIT_POLICIES.find(function(s){ return s.id===id; }) || null; };
 window.transportPackageById = function transportPackageById(id){ return window.TRANSPORT_PACKAGES.find(function(p){ return p.id===id; }) || null; };
 window.lustServiceById = function lustServiceById(id){ return window.LUST_SERVICES.find(function(s){ return s.id===id; }) || null; };
+window.lustEgressPoolById = function lustEgressPoolById(id){ return window.LUST_EGRESS_POOLS.find(function(p){ return p.id===id; }) || null; };
+window.lustRouteMapById = function lustRouteMapById(id){ return window.LUST_ROUTE_MAPS.find(function(r){ return r.id===id; }) || null; };
 
 window.userById = function userById(id){ return window.USERS.find(function(u){ return u.id===id; }) || null; };
 
@@ -189,6 +193,8 @@ export var balancerById        = window.balancerById;
 export var transitPolicyById   = window.transitPolicyById;
 export var transportPackageById     = window.transportPackageById;
 export var lustServiceById          = window.lustServiceById;
+export var lustEgressPoolById       = window.lustEgressPoolById;
+export var lustRouteMapById         = window.lustRouteMapById;
 export var userById            = window.userById;
 export var planById            = window.planById;
 export var subscriptionById    = window.subscriptionById;

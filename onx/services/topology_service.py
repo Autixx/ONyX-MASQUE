@@ -9,11 +9,14 @@ from sqlalchemy.orm import Session
 
 from onx.db.models.link import Link, LinkState
 from onx.db.models.link_endpoint import LinkEndpoint, LinkSide
+from onx.db.models.lust_gateway_route_map import LustGatewayRouteMap
+from onx.db.models.lust_service import LustService
 from onx.db.models.node import Node, NodeStatus
 from onx.db.models.peer_registry import PeerRegistry
 from onx.db.models.peer_traffic_state import PeerTrafficState
 from onx.db.models.probe_result import ProbeResult, ProbeType
 from onx.schemas.topology import PathPlanRequest
+from onx.services.lust_routing_service import lust_routing_service
 
 
 class TopologyService:
@@ -89,6 +92,8 @@ class TopologyService:
                     "metrics": metrics,
                 }
             )
+
+        graph_edges.extend(self._build_lust_edges(db))
 
         return {
             "nodes": graph_nodes,
@@ -283,6 +288,65 @@ class TopologyService:
             db.scalars(select(LinkEndpoint).where(LinkEndpoint.link_id.in_(link_ids))).all()
         )
         return {(row.link_id, row.side.value): row for row in rows}
+
+    def _build_lust_edges(self, db: Session) -> list[dict[str, Any]]:
+        route_maps = list(
+            db.scalars(
+                select(LustGatewayRouteMap).where(LustGatewayRouteMap.enabled.is_(True)).order_by(LustGatewayRouteMap.priority.asc())
+            ).all()
+        )
+        edges: list[dict[str, Any]] = []
+        for route_map in route_maps:
+            gateway_service = db.get(LustService, route_map.gateway_service_id)
+            if gateway_service is None:
+                continue
+            selected_map = next(
+                (
+                    item
+                    for item in lust_routing_service.resolve_gateway_candidates(
+                        db,
+                        gateway_service,
+                        destination_country_code=route_map.destination_country_code,
+                    )
+                    if str(item.get("route_map_id") or "") == route_map.id
+                ),
+                None,
+            )
+            for member in list((selected_map or {}).get("members") or []):
+                target_service = db.get(LustService, str(member.get("service_id") or ""))
+                if target_service is None:
+                    continue
+                metrics = self._estimate_link_metrics(
+                    db,
+                    left_node_id=gateway_service.node_id,
+                    right_node_id=target_service.node_id,
+                    left_interface=None,
+                    right_interface=None,
+                    latency_weight=1.0,
+                    load_weight=1.2,
+                    loss_weight=1.5,
+                )
+                edges.append(
+                    {
+                        "id": f"lust-route:{route_map.id}:{target_service.id}",
+                        "name": route_map.name,
+                        "driver_name": "lust",
+                        "topology_type": "lust",
+                        "state": "active" if gateway_service.state == "active" and target_service.state == "active" else "planned",
+                        "left_node_id": gateway_service.node_id,
+                        "right_node_id": target_service.node_id,
+                        "left_interface": gateway_service.name,
+                        "right_interface": target_service.name,
+                        "health": {
+                            "route_map_id": route_map.id,
+                            "egress_pool_id": route_map.egress_pool_id,
+                            "weight": member.get("weight"),
+                            "country_code": route_map.destination_country_code,
+                        },
+                        "metrics": metrics,
+                    }
+                )
+        return edges
 
     def _estimate_link_metrics(
         self,

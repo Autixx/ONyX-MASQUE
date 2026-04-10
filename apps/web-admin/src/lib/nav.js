@@ -15,12 +15,14 @@ window.NAV_GROUPS = {
   },
   operations: {
     label: 'Operations',
-    pages: ['nodes', 'jobs', 'lust', 'policies', 'clientupdate'],
+    pages: ['nodes', 'jobs', 'lust', 'lust-pools', 'lust-route-maps', 'policies', 'clientupdate'],
     visible_for: ['l2', 'l3', 'admin'],
     subs: [
       { p: 'nodes',        label: 'Nodes',          badge: 'nbn', visible_for: ['l2', 'l3', 'admin'] },
       { p: 'jobs',         label: 'Deployments',    badge: 'jbn', visible_for: ['l2', 'l3', 'admin'] },
       { p: 'lust',         label: 'LuST',           visible_for: ['l2', 'l3', 'admin'] },
+      { p: 'lust-pools',   label: 'LuST Pools',     visible_for: ['l2', 'l3', 'admin'] },
+      { p: 'lust-route-maps', label: 'LuST Route Maps', visible_for: ['l2', 'l3', 'admin'] },
       { p: 'policies',     label: 'Routing',        visible_for: ['l3', 'admin'] },
       { p: 'clientupdate', label: 'Client Updates', visible_for: ['l3', 'admin'] },
     ],

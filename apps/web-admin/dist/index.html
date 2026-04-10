@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ONyX Panel</title>
-  <script type="module" crossorigin src="/assets/index-aw9v62Kp.js"></script>
+  <script type="module" crossorigin src="/assets/index-BeXuiUYD.js"></script>
   <link rel="stylesheet" crossorigin href="/assets/index-QWWLg0u8.css">
 </head>
 <body>
@@ -523,6 +523,59 @@
               </tr>
             </thead>
             <tbody id="lusttb"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="page" id="page-lust-pools">
+        <div class="ph">
+          <span class="ptitle">LuST Egress Pools</span>
+          <div class="pbtn-row">
+            <button class="btn" onclick="refreshLustRouting()">REFRESH</button>
+            <button class="btn pri" id="btnAddLustPool">+ ADD POOL</button>
+          </div>
+        </div>
+        <div class="tw">
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Strategy</th>
+                <th>Members</th>
+                <th>Resolved</th>
+                <th>State</th>
+                <th>Description</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="lustpoolstb"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="page" id="page-lust-route-maps">
+        <div class="ph">
+          <span class="ptitle">LuST Route Maps</span>
+          <div class="pbtn-row">
+            <button class="btn" onclick="refreshLustRouting()">REFRESH</button>
+            <button class="btn pri" id="btnAddLustRouteMap">+ ADD ROUTE MAP</button>
+          </div>
+        </div>
+        <div class="tw">
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Gateway</th>
+                <th>Egress Pool</th>
+                <th>Priority</th>
+                <th>Country</th>
+                <th>State</th>
+                <th>Description</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="lustroutemapstb"></tbody>
           </table>
         </div>
       </div>

@@ -25,6 +25,7 @@ import './pages/referral.js';
 import './pages/management.js';
 import './pages/failban.js';
 import './pages/lust.js';
+import './pages/lustrouting.js';
 import './pages/tickets.js';
 import './pages/apidebug.js';
 import './pages/clientupdate.js';
@@ -98,6 +99,7 @@ window.loadData = async function() {
   if (window.pageVisible?.('nodes')) tasks.push(window.refreshNodes?.());
   if (window.pageVisible?.('traffic')) tasks.push(window.refreshNodeTrafficSummary?.());
   if (window.pageVisible?.('lust')) tasks.push(window.refreshLustServices?.());
+  if (window.pageVisible?.('lust-pools') || window.pageVisible?.('lust-route-maps')) tasks.push(window.refreshLustRouting?.());
   if (window.pageVisible?.('policies')) tasks.push(window.refreshPolicies?.());
   if (window.pageVisible?.('jobs')) tasks.push(window.refreshJobs?.());
   if (window.pageVisible?.('audit')) tasks.push(window.refreshAudit?.());
@@ -145,8 +147,10 @@ window.PAGE_REFRESHERS = {
     ].filter(Boolean));
   },
   topology: function() {
-    if (!window.refreshTopology) return Promise.resolve();
-    return window.refreshTopology().then(function() {
+    return Promise.all([
+      window.refreshNodes?.(),
+      window.refreshTopology?.(),
+    ].filter(Boolean)).then(function() {
       return window.drawTopo?.();
     });
   },
@@ -161,6 +165,12 @@ window.PAGE_REFRESHERS = {
       window.refreshLustServices?.(),
       window.loadPeers?.(),
     ].filter(Boolean));
+  },
+  'lust-pools': function() {
+    return window.refreshLustRouting?.();
+  },
+  'lust-route-maps': function() {
+    return window.refreshLustRouting?.();
   },
   policies: function() {
     return window.refreshPolicies?.();
@@ -223,9 +233,9 @@ window.PAGE_WS_REFRESH_MAP = {
   'node.traffic.': ['nodes', 'traffic', 'topology', 'system'],
   'registration.': ['registrations', 'users', 'management'],
   'peer.': ['peers', 'lust', 'management'],
-  'lust_service.': ['lust', 'peers'],
-  'lust_egress_pool.': ['lust', 'peers'],
-  'lust_route_map.': ['lust', 'peers'],
+  'lust_service.': ['lust', 'lust-pools', 'lust-route-maps', 'peers', 'topology'],
+  'lust_egress_pool.': ['lust', 'lust-pools', 'lust-route-maps', 'peers', 'topology'],
+  'lust_route_map.': ['lust', 'lust-pools', 'lust-route-maps', 'peers', 'topology'],
   'user.': ['users', 'management', 'devices'],
   'subscription.': ['management', 'users'],
   'plan.': ['management', 'users'],
@@ -499,6 +509,8 @@ document.addEventListener('DOMContentLoaded', function() {
   _btn('btnAddPlan',                 function(){ window.openPlanModal?.(); });
   _btn('btnAddTransportPackage',     function(){ window.openTransportPackageModal?.(); });
   _btn('btnAddLustService',          function(){ window.openLustServiceModal?.(); });
+  _btn('btnAddLustPool',             function(){ window.openLustPoolModal?.(); });
+  _btn('btnAddLustRouteMap',         function(){ window.openLustRouteMapModal?.(); });
   _btn('btnCreateReferralPool',      function(){ window.openReferralPoolModal?.(); });
 
   (async function init() {
