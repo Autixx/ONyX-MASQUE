@@ -252,6 +252,13 @@ class PrimaryRoute:
     next_hop: str
 
 
+@dataclass(slots=True)
+class DefaultRouteMetricSnapshot:
+    interface_alias: str
+    next_hop: str
+    route_metric: int
+
+
 def ensure_dirs() -> None:
     CLIENT_HOME.mkdir(parents=True, exist_ok=True)
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
@@ -891,6 +898,7 @@ class WintunRunner:
         self._ipv6_disabled_interface: str | None = None
         self._original_primary_metric: int | None = None
         self._original_adapter_metric: int | None = None
+        self._original_default_route_metrics: list[DefaultRouteMetricSnapshot] = []
         self._log_threads: list[threading.Thread] = []
         self._recent_logs: dict[str, deque[str]] = {
             "stdout": deque(maxlen=24),
@@ -1137,8 +1145,9 @@ class WintunRunner:
         self._replace_route(f"{self._edge_ip}/32", self._primary_route.interface_alias, self._primary_route.next_hop)
         for prefix in self._config.tunnel.bypass_routes:
             self._replace_route(prefix, self._primary_route.interface_alias, self._primary_route.next_hop)
-        self._prioritize_tunnel_interface()
         self._replace_route("0.0.0.0/0", self._adapter_name, self._config.tunnel.gateway_v4)
+        self._set_default_route_metric(self._adapter_name, self._config.tunnel.gateway_v4, 1)
+        self._prioritize_tunnel_interface()
         self._disable_ipv6_on_primary_interface()
 
     def _wait_for_tunnel_ready(self) -> None:
@@ -1247,6 +1256,11 @@ class WintunRunner:
     def _prioritize_tunnel_interface(self) -> None:
         self._original_adapter_metric = self._read_interface_metric(self._adapter_name)
         self._set_interface_metric(self._adapter_name, 1)
+        self._original_default_route_metrics = self._read_default_route_metrics()
+        for route in self._original_default_route_metrics:
+            if route.interface_alias.lower() == self._adapter_name.lower():
+                continue
+            self._set_default_route_metric(route.interface_alias, route.next_hop, 50)
         if self._primary_route is None:
             return
         primary_alias = self._primary_route.interface_alias
@@ -1256,6 +1270,12 @@ class WintunRunner:
         self._set_interface_metric(primary_alias, 50)
 
     def _restore_interface_metrics(self) -> None:
+        for route in self._original_default_route_metrics:
+            try:
+                self._set_default_route_metric(route.interface_alias, route.next_hop, route.route_metric)
+            except Exception:
+                pass
+        self._original_default_route_metrics = []
         if self._original_adapter_metric is not None:
             try:
                 self._set_interface_metric(self._adapter_name, self._original_adapter_metric)
@@ -1289,6 +1309,50 @@ class WintunRunner:
             f"Set-NetIPInterface -InterfaceAlias {_ps_quote(interface_name)} -AddressFamily IPv4 -InterfaceMetric {int(metric)} | Out-Null"
         )
         self._logger.info("interface_metric_set interface=%s metric=%s", interface_name, metric)
+
+    def _read_default_route_metrics(self) -> list[DefaultRouteMetricSnapshot]:
+        raw = self._run_powershell(
+            "Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | "
+            "Where-Object { $_.NextHop -and $_.InterfaceAlias -and $_.State -eq 'Alive' } | "
+            "Select-Object InterfaceAlias,NextHop,RouteMetric | ConvertTo-Json -Compress",
+            allow_failure=True,
+        )
+        if not raw:
+            return []
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return []
+        rows = parsed if isinstance(parsed, list) else [parsed]
+        snapshots: list[DefaultRouteMetricSnapshot] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            interface_alias = str(row.get("InterfaceAlias") or "").strip()
+            next_hop = str(row.get("NextHop") or "").strip()
+            route_metric = row.get("RouteMetric")
+            if not interface_alias or not next_hop or route_metric is None:
+                continue
+            try:
+                snapshots.append(
+                    DefaultRouteMetricSnapshot(
+                        interface_alias=interface_alias,
+                        next_hop=next_hop,
+                        route_metric=int(route_metric),
+                    )
+                )
+            except Exception:
+                continue
+        return snapshots
+
+    def _set_default_route_metric(self, interface_name: str, next_hop: str, metric: int) -> None:
+        self._run_powershell(
+            f"Set-NetRoute -AddressFamily IPv4 -DestinationPrefix '0.0.0.0/0' "
+            f"-InterfaceAlias {_ps_quote(interface_name)} -NextHop {_ps_quote(next_hop)} "
+            f"-RouteMetric {int(metric)} -Confirm:$false | Out-Null",
+            allow_failure=True,
+        )
+        self._logger.info("default_route_metric_set interface=%s next_hop=%s metric=%s", interface_name, next_hop, metric)
 
     def _replace_route(self, prefix: str, interface_name: str, gateway: str) -> None:
         self._delete_route(prefix, interface_name, gateway)
