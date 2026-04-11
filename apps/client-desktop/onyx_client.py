@@ -1353,18 +1353,31 @@ class LocalTunnelRuntime:
             effective_dns: list[str] = []
             policy_resolver = str(dns_policy.get("resolver") or "").strip()
             profile_resolver = str(dns.get("resolver") or "").strip()
-            if policy_resolver:
-                effective_dns.append(policy_resolver)
-            if profile_resolver and profile_resolver not in effective_dns:
-                effective_dns.append(profile_resolver)
-            for resolver in self._local_dns:
-                resolver = str(resolver or "").strip()
-                if resolver and resolver not in effective_dns:
-                    effective_dns.append(resolver)
+            tunnel_mode = str(tunnel.get("mode") or "").strip().lower()
+            # Wintun currently relies on the local machine's recursive resolvers.
+            # Forcing public resolvers through tun2socks makes full-tunnel look
+            # "up" while name resolution stalls. Prefer the pre-tunnel local DNS
+            # snapshot and bypass those resolvers explicitly.
+            if tunnel_mode == "wintun" and self._local_dns:
+                for resolver in self._local_dns:
+                    resolver = str(resolver or "").strip()
+                    if resolver and resolver not in effective_dns:
+                        effective_dns.append(resolver)
+                dns["force_all"] = False
+                dns["force_doh"] = False
+            else:
+                if policy_resolver:
+                    effective_dns.append(policy_resolver)
+                if profile_resolver and profile_resolver not in effective_dns:
+                    effective_dns.append(profile_resolver)
+                for resolver in self._local_dns:
+                    resolver = str(resolver or "").strip()
+                    if resolver and resolver not in effective_dns:
+                        effective_dns.append(resolver)
             if effective_dns:
                 tunnel["dns_servers"] = list(effective_dns)
                 dns["resolver"] = effective_dns[0]
-            use_local_dns_bypass = bool(self._local_dns) and not policy_resolver and not profile_resolver
+            use_local_dns_bypass = bool(self._local_dns) and (tunnel_mode == "wintun" or (not policy_resolver and not profile_resolver))
             if use_local_dns_bypass:
                 bypass_routes = list(tunnel.get("bypass_routes") or [])
                 for resolver in self._local_dns:
