@@ -309,28 +309,37 @@ def write_status(
 
 
 def probe_system_tunnel(logger: logging.Logger) -> dict[str, Any]:
+    probe_targets = [
+        ("1.1.1.1", 443),
+        ("8.8.8.8", 443),
+        ("9.9.9.9", 443),
+    ]
+    last_error = "no probe targets attempted"
     try:
-        with httpx.Client(timeout=8.0, follow_redirects=True, trust_env=False) as client:
-            response = client.get("https://api.ipify.org")
-        response.raise_for_status()
-        public_ip = (response.text or "").strip()
-        logger.info("system_tunnel_probe_ok public_ip=%s", public_ip)
-        return {
-            "requested": True,
-            "active": True,
-            "validated": True,
-            "public_ip": public_ip,
-            "detail": "system tunnel validated",
-        }
+        for host, port in probe_targets:
+            try:
+                with socket.create_connection((host, port), timeout=3.0):
+                    logger.info("system_tunnel_probe_ok target=%s:%s", host, port)
+                    return {
+                        "requested": True,
+                        "active": True,
+                        "validated": True,
+                        "public_ip": "",
+                        "detail": f"system tunnel validated via tcp probe {host}:{port}",
+                    }
+            except Exception as exc:
+                last_error = f"{host}:{port} -> {exc}"
+                logger.debug("system_tunnel_probe_target_failed %s", last_error)
     except Exception as exc:
-        logger.warning("system_tunnel_probe_failed %s", exc)
-        return {
-            "requested": True,
-            "active": False,
-            "validated": False,
-            "public_ip": "",
-            "detail": f"system tunnel validation failed: {exc}",
-        }
+        last_error = str(exc)
+    logger.warning("system_tunnel_probe_failed %s", last_error)
+    return {
+        "requested": True,
+        "active": False,
+        "validated": False,
+        "public_ip": "",
+        "detail": f"system tunnel validation failed: {last_error}",
+    }
 
 
 def load_config(path: str) -> LustConfig:
