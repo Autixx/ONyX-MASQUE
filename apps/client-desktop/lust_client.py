@@ -283,6 +283,8 @@ def write_status(
     response: dict[str, Any] | None = None,
     proxy: dict[str, Any] | None = None,
     tunnel: dict[str, Any] | None = None,
+    transport: dict[str, Any] | None = None,
+    system_tunnel: dict[str, Any] | None = None,
 ) -> None:
     payload = {
         "state": state,
@@ -291,6 +293,8 @@ def write_status(
         "response": response or {},
         "proxy": proxy or {},
         "tunnel": tunnel or {},
+        "transport": transport or {},
+        "system_tunnel": system_tunnel or {},
     }
     if config is not None:
         payload["endpoint"] = {
@@ -302,6 +306,31 @@ def write_status(
             "username": config.client.username,
         }
     STATUS_PATH.write_text(json.dumps(payload, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
+
+
+def probe_system_tunnel(logger: logging.Logger) -> dict[str, Any]:
+    try:
+        with httpx.Client(timeout=8.0, follow_redirects=True, trust_env=False) as client:
+            response = client.get("https://api.ipify.org")
+        response.raise_for_status()
+        public_ip = (response.text or "").strip()
+        logger.info("system_tunnel_probe_ok public_ip=%s", public_ip)
+        return {
+            "requested": True,
+            "active": True,
+            "validated": True,
+            "public_ip": public_ip,
+            "detail": "system tunnel validated",
+        }
+    except Exception as exc:
+        logger.warning("system_tunnel_probe_failed %s", exc)
+        return {
+            "requested": True,
+            "active": False,
+            "validated": False,
+            "public_ip": "",
+            "detail": f"system tunnel validation failed: {exc}",
+        }
 
 
 def load_config(path: str) -> LustConfig:
@@ -810,7 +839,9 @@ class Socks5Server:
 
     def _handle_connect(self, conn: socket.socket, host: str, port: int) -> None:
         channel_id = f"tcp-{secrets.token_hex(8)}"
+        self._logger.info("socks_connect_request channel_id=%s host=%s port=%s", channel_id, host, port)
         self._controller.send_frame({"op": "open_tcp", "channel_id": channel_id, "host": host, "port": port})
+        self._logger.info("socks_connect_opened channel_id=%s host=%s port=%s", channel_id, host, port)
         self._controller.register_tcp_channel(channel_id, conn)
         conn.sendall(b"\x05\x00\x00\x01\x00\x00\x00\x00\x00\x00")
 
@@ -820,10 +851,12 @@ class Socks5Server:
                     data = conn.recv(65535)
                     if not data:
                         break
+                    self._logger.debug("socks_connect_data channel_id=%s host=%s port=%s bytes=%s", channel_id, host, port, len(data))
                     self._controller.send_frame({"op": "tcp_data", "channel_id": channel_id, "data_b64": _b64encode(data)})
             except Exception:
                 pass
             finally:
+                self._logger.info("socks_connect_local_close channel_id=%s host=%s port=%s", channel_id, host, port)
                 self._controller.close_channel(channel_id)
 
         threading.Thread(target=_pump_local, name=f"lust-tcp-{channel_id}", daemon=True).start()
@@ -1252,15 +1285,52 @@ def run(config_path: str, interval_seconds: float, verbose: bool, probe_once: bo
         write_status(state="error", config=None, detail=f"config_error: {exc}")
         return 2
     logger.info("config_loaded peer_id=%s base_url=%s tunnel_mode=%s", config.client.peer_id, config.base_url, config.tunnel.mode)
-    write_status(state="starting", config=config, detail="client starting")
+    base_transport_meta: dict[str, Any] = {
+        "active": False,
+        "validated": False,
+        "public_ip": "",
+        "detail": "transport starting",
+    }
+    base_system_tunnel_meta: dict[str, Any] = {
+        "requested": config.tunnel.mode == "wintun",
+        "active": False,
+        "validated": False,
+        "public_ip": "",
+        "detail": "not requested" if config.tunnel.mode != "wintun" else "system tunnel starting",
+    }
+    write_status(
+        state="starting",
+        config=config,
+        detail="client starting",
+        transport=base_transport_meta,
+        system_tunnel=base_system_tunnel_meta,
+    )
     try:
         probe_meta = probe_endpoint(config, verify, logger)
     except Exception as exc:
         logger.error("startup_probe_failed %s", exc)
-        write_status(state="error", config=config, detail=f"startup_probe_failed: {exc}")
+        write_status(
+            state="error",
+            config=config,
+            detail=f"startup_probe_failed: {exc}",
+            transport=base_transport_meta,
+            system_tunnel=base_system_tunnel_meta,
+        )
         return 1
     if probe_once:
-        write_status(state="running", config=config, detail="probe succeeded", response=probe_meta)
+        write_status(
+            state="running",
+            config=config,
+            detail="probe succeeded",
+            response=probe_meta,
+            transport={
+                "active": True,
+                "validated": True,
+                "public_ip": "",
+                "detail": "transport probe succeeded",
+            },
+            system_tunnel=base_system_tunnel_meta,
+        )
         logger.info("probe_once_complete peer_id=%s", config.client.peer_id)
         return 0
     controller = EdgeController(config, logger, verify)
@@ -1281,30 +1351,91 @@ def run(config_path: str, interval_seconds: float, verbose: bool, probe_once: bo
             "interface": "",
             "socks5_upstream": {"host": socks_server.listen_host, "port": socks_server.listen_port},
         }
+        transport_meta: dict[str, Any] = {
+            "active": True,
+            "validated": True,
+            "public_ip": "",
+            "detail": "LuST transport is active",
+        }
+        system_tunnel_meta: dict[str, Any] = {
+            "requested": config.tunnel.mode == "wintun",
+            "active": False,
+            "validated": False,
+            "public_ip": "",
+            "detail": "not requested" if config.tunnel.mode != "wintun" else "system tunnel pending",
+        }
         if config.tunnel.mode == "wintun":
             tunnel_runner = WintunRunner(config, logger)
             tunnel_meta = tunnel_runner.start(socks_host=socks_server.listen_host, socks_port=socks_server.listen_port)
             tunnel_meta["socks5_upstream"] = {"host": socks_server.listen_host, "port": socks_server.listen_port}
             logger.info("wintun_ready interface=%s edge_bypass_ip=%s", tunnel_meta.get("interface"), tunnel_meta.get("edge_bypass_ip"))
+            system_tunnel_meta = probe_system_tunnel(logger)
         else:
             logger.info("socks_ready host=%s port=%s session_id=%s", socks_server.listen_host, socks_server.listen_port, controller.session_id)
+            transport_probe = probe_system_tunnel(logger)
+            transport_meta["public_ip"] = str(transport_probe.get("public_ip") or "")
         write_status(
             state="running",
             config=config,
-            detail="LuST transport is active",
+            detail=(
+                "LuST transport is active"
+                if not system_tunnel_meta.get("requested")
+                else (
+                    "LuST transport + full tunnel active"
+                    if system_tunnel_meta.get("validated")
+                    else f"LuST transport active; {system_tunnel_meta.get('detail') or 'system tunnel validation failed'}"
+                )
+            ),
             response={**probe_meta, **session_meta},
             proxy=proxy_meta,
             tunnel=tunnel_meta,
+            transport=transport_meta,
+            system_tunnel=system_tunnel_meta,
         )
         while not stop_event.is_set():
             if controller.failed_detail:
                 raise RuntimeError(controller.failed_detail)
             if tunnel_runner is not None:
                 tunnel_runner.ensure_running()
+                system_tunnel_meta = probe_system_tunnel(logger)
+                write_status(
+                    state="running",
+                    config=config,
+                    detail=(
+                        "LuST transport + full tunnel active"
+                        if system_tunnel_meta.get("validated")
+                        else f"LuST transport active; {system_tunnel_meta.get('detail') or 'system tunnel validation failed'}"
+                    ),
+                    response={**probe_meta, **session_meta},
+                    proxy=proxy_meta,
+                    tunnel=tunnel_meta,
+                    transport=transport_meta,
+                    system_tunnel=system_tunnel_meta,
+                )
             time.sleep(max(1.0, interval_seconds))
     except Exception as exc:
         logger.warning("runtime_failed %s", exc)
-        write_status(state="degraded", config=config, detail=f"runtime_failed: {exc}", response=probe_meta)
+        write_status(
+            state="degraded",
+            config=config,
+            detail=f"runtime_failed: {exc}",
+            response=probe_meta,
+            proxy=proxy_meta if 'proxy_meta' in locals() else None,
+            tunnel=tunnel_meta if 'tunnel_meta' in locals() else None,
+            transport={
+                "active": False,
+                "validated": False,
+                "public_ip": "",
+                "detail": f"runtime_failed: {exc}",
+            },
+            system_tunnel={
+                "requested": config.tunnel.mode == "wintun",
+                "active": False,
+                "validated": False,
+                "public_ip": "",
+                "detail": f"runtime_failed: {exc}",
+            },
+        )
         return 1
     finally:
         if tunnel_runner is not None:
@@ -1312,7 +1443,24 @@ def run(config_path: str, interval_seconds: float, verbose: bool, probe_once: bo
         if socks_server is not None:
             socks_server.stop()
         controller.stop()
-        write_status(state="stopped", config=config, detail="client stopped")
+        write_status(
+            state="stopped",
+            config=config,
+            detail="client stopped",
+            transport={
+                "active": False,
+                "validated": False,
+                "public_ip": "",
+                "detail": "client stopped",
+            },
+            system_tunnel={
+                "requested": config.tunnel.mode == "wintun",
+                "active": False,
+                "validated": False,
+                "public_ip": "",
+                "detail": "client stopped",
+            },
+        )
         logger.info("client_stopped peer_id=%s", config.client.peer_id)
     return 0
 

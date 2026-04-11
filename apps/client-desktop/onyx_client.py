@@ -461,6 +461,13 @@ class ClientState:
         self.active_profile_id  = ""
         self.active_config_path = ""
         self.active_runtime_mode = ""
+        self.transport_connected = False
+        self.transport_detail = ""
+        self.transport_public_ip = ""
+        self.full_tunnel_requested = False
+        self.full_tunnel_active = False
+        self.full_tunnel_detail = ""
+        self.full_tunnel_public_ip = ""
         self.lang = "en"
         self.remember_me = False
         self.saved_username = ""
@@ -602,6 +609,9 @@ class ClientState:
         self.rx_bytes = self.tx_bytes = 0; self.rx_rate = self.tx_rate = 0.0
         self.active_transport = ""; self.active_interface = ""
         self.active_profile_id = ""; self.active_config_path = ""; self.active_runtime_mode = ""
+        self.transport_connected = False; self.transport_detail = ""; self.transport_public_ip = ""
+        self.full_tunnel_requested = False; self.full_tunnel_active = False
+        self.full_tunnel_detail = ""; self.full_tunnel_public_ip = ""
         self.remember_me = False; self.saved_username = ""; self.saved_password = ""
         self.split_tunnel_disabled = False; self.split_tunnel_exclude_lan = False
         self.split_tunnel_bypass_domains = []
@@ -616,6 +626,13 @@ class ClientState:
         self.active_profile_id = ""
         self.active_config_path = ""
         self.active_runtime_mode = ""
+        self.transport_connected = False
+        self.transport_detail = ""
+        self.transport_public_ip = ""
+        self.full_tunnel_requested = False
+        self.full_tunnel_active = False
+        self.full_tunnel_detail = ""
+        self.full_tunnel_public_ip = ""
         self.save()
 
     @property
@@ -758,6 +775,13 @@ class LocalTunnelRuntime:
         self.st.active_profile_id = ""
         self.st.active_config_path = ""
         self.st.active_runtime_mode = ""
+        self.st.transport_connected = False
+        self.st.transport_detail = ""
+        self.st.transport_public_ip = ""
+        self.st.full_tunnel_requested = False
+        self.st.full_tunnel_active = False
+        self.st.full_tunnel_detail = ""
+        self.st.full_tunnel_public_ip = ""
         self.st.rx_bytes = self.st.tx_bytes = 0
         self.st.rx_rate = self.st.tx_rate = 0.0
         self.st.save()
@@ -1317,9 +1341,22 @@ class LocalTunnelRuntime:
             dns_policy = self.dns_policy()
             tunnel = dict(parsed.get("tunnel") or {})
             dns = dict(parsed.get("dns") or {})
-            use_local_dns = bool(self._local_dns) and not bool(dns_policy.get("force_all")) and not bool(dns_policy.get("force_doh"))
-            if use_local_dns:
-                tunnel["dns_servers"] = list(self._local_dns)
+            effective_dns: list[str] = []
+            policy_resolver = str(dns_policy.get("resolver") or "").strip()
+            profile_resolver = str(dns.get("resolver") or "").strip()
+            if policy_resolver:
+                effective_dns.append(policy_resolver)
+            if profile_resolver and profile_resolver not in effective_dns:
+                effective_dns.append(profile_resolver)
+            for resolver in self._local_dns:
+                resolver = str(resolver or "").strip()
+                if resolver and resolver not in effective_dns:
+                    effective_dns.append(resolver)
+            if effective_dns:
+                tunnel["dns_servers"] = list(effective_dns)
+                dns["resolver"] = effective_dns[0]
+            use_local_dns_bypass = bool(self._local_dns) and not policy_resolver and not profile_resolver
+            if use_local_dns_bypass:
                 bypass_routes = list(tunnel.get("bypass_routes") or [])
                 for resolver in self._local_dns:
                     resolver = str(resolver or "").strip()
@@ -1329,7 +1366,6 @@ class LocalTunnelRuntime:
                     if cidr not in bypass_routes:
                         bypass_routes.append(cidr)
                 tunnel["bypass_routes"] = bypass_routes
-                dns["resolver"] = self._local_dns[0]
             parsed["dns"] = dns
             parsed["tunnel"] = tunnel
             return json.dumps(parsed, separators=(",", ":"), ensure_ascii=True)
@@ -1390,6 +1426,13 @@ class LocalTunnelRuntime:
                 self.st.active_profile_id = result.get("profile_id", profile.get("id", ""))
                 self.st.active_config_path = result.get("config_path", "")
                 self.st.active_runtime_mode = "daemon"
+                self.st.transport_connected = False
+                self.st.transport_detail = "waiting for runtime status"
+                self.st.transport_public_ip = ""
+                self.st.full_tunnel_requested = self.st.active_transport == "lust"
+                self.st.full_tunnel_active = False
+                self.st.full_tunnel_detail = "waiting for runtime status"
+                self.st.full_tunnel_public_ip = ""
                 self.st.rx_bytes = self.st.tx_bytes = 0
                 self.st.rx_rate = self.st.tx_rate = 0.0
                 self.st.save()
@@ -2743,6 +2786,17 @@ class DashboardScreen(QWidget):
         self._dnslbl.setStyleSheet(f"color:{C_T3};font-size:12px;"); dl.addWidget(self._dnslbl); dl.addStretch()
         lay.addWidget(self._dns); lay.addSpacing(6)
 
+        self._transport = QFrame()
+        self._transport.setStyleSheet(f"QFrame{{background:{C_BG2};border:1px solid {C_BDR};border-radius:4px;}}")
+        tl = QVBoxLayout(self._transport); tl.setContentsMargins(14,8,14,8); tl.setSpacing(4)
+        self._transportlbl = QLabel("● Transport: Inactive")
+        self._transportlbl.setStyleSheet(f"color:{C_T3};font-size:12px;")
+        self._tunnellbl = QLabel("● Full Tunnel: Inactive")
+        self._tunnellbl.setStyleSheet(f"color:{C_T3};font-size:12px;")
+        tl.addWidget(self._transportlbl)
+        tl.addWidget(self._tunnellbl)
+        lay.addWidget(self._transport); lay.addSpacing(6)
+
         self._get_cfg_btn = AccentButton("GET CONFIGURATION")
         self._get_cfg_btn.clicked.connect(self._issue_bundle)
         lay.addWidget(self._get_cfg_btn); lay.addSpacing(12)
@@ -2984,9 +3038,18 @@ class DashboardScreen(QWidget):
         self._ulbl.setText(self.st.username)
         on=self.st.connected; self._cbtn.set_connected(on)
         if on:
-            self._stlbl.setText("CONNECTED")
-            self._stlbl.setStyleSheet(f"color:{C_GRN};font-size:12px;font-weight:bold;letter-spacing:4px;")
-            self._hlbl.setText("Tap to disconnect")
+            if self.st.transport_connected and self.st.full_tunnel_requested and not self.st.full_tunnel_active:
+                self._stlbl.setText("TRANSPORT ONLY")
+                self._stlbl.setStyleSheet(f"color:{C_AMB};font-size:12px;font-weight:bold;letter-spacing:3px;")
+                self._hlbl.setText((self.st.full_tunnel_detail or self.st.transport_detail or "LuST transport active; full tunnel validation pending")[:180])
+            elif self.st.transport_connected and not self.st.full_tunnel_requested:
+                self._stlbl.setText("PROXY MODE")
+                self._stlbl.setStyleSheet(f"color:{C_ACC};font-size:12px;font-weight:bold;letter-spacing:3px;")
+                self._hlbl.setText((self.st.transport_detail or "LuST transport active")[:180])
+            else:
+                self._stlbl.setText("CONNECTED")
+                self._stlbl.setStyleSheet(f"color:{C_GRN};font-size:12px;font-weight:bold;letter-spacing:4px;")
+                self._hlbl.setText("Tap to disconnect")
             self._dnslbl.setText("● Protected DNS: On")
             self._dnslbl.setStyleSheet(f"color:{C_GRN};font-size:12px;")
         else:
@@ -2995,6 +3058,29 @@ class DashboardScreen(QWidget):
             self._hlbl.setText("Tap to connect")
             self._dnslbl.setText("● Protected DNS: Off")
             self._dnslbl.setStyleSheet(f"color:{C_T3};font-size:12px;")
+        if self.st.transport_connected:
+            transport_text = "● Transport: Active"
+            if self.st.transport_public_ip:
+                transport_text += f" ({self.st.transport_public_ip})"
+            self._transportlbl.setText(transport_text)
+            self._transportlbl.setStyleSheet(f"color:{C_GRN};font-size:12px;")
+        else:
+            self._transportlbl.setText("● Transport: Inactive")
+            self._transportlbl.setStyleSheet(f"color:{C_T3};font-size:12px;")
+        if self.st.full_tunnel_requested:
+            if self.st.full_tunnel_active:
+                tunnel_text = "● Full Tunnel: Active"
+                if self.st.full_tunnel_public_ip:
+                    tunnel_text += f" ({self.st.full_tunnel_public_ip})"
+                self._tunnellbl.setText(tunnel_text)
+                self._tunnellbl.setStyleSheet(f"color:{C_GRN};font-size:12px;")
+            else:
+                detail = self.st.full_tunnel_detail or "validation pending"
+                self._tunnellbl.setText(f"● Full Tunnel: Degraded — {detail[:96]}")
+                self._tunnellbl.setStyleSheet(f"color:{C_AMB};font-size:12px;")
+        else:
+            self._tunnellbl.setText("● Full Tunnel: Not Requested")
+            self._tunnellbl.setStyleSheet(f"color:{C_T3};font-size:12px;")
         self._su.set_value(fmt_bytes(self.st.rx_bytes+self.st.tx_bytes))
         self._srx.set_value(fmt_speed(self.st.rx_rate) if on else "—", C_GRN if on else None)
         self._stx.set_value(fmt_speed(self.st.tx_rate) if on else "—", C_ACC2 if on else None)
@@ -3061,6 +3147,13 @@ class DashboardScreen(QWidget):
             self._cbtn.set_connecting(False)
             if err:
                 self.st.connected = False
+                self.st.transport_connected = False
+                self.st.transport_detail = ""
+                self.st.transport_public_ip = ""
+                self.st.full_tunnel_requested = False
+                self.st.full_tunnel_active = False
+                self.st.full_tunnel_detail = ""
+                self.st.full_tunnel_public_ip = ""
                 if isinstance(err, DeviceNotFoundError):
                     self._clear_device()
                     _error_dialog(self, "Connect", "Device not found on the server.\nPlease register this device again.")
@@ -3074,9 +3167,21 @@ class DashboardScreen(QWidget):
 
         run_async(self, _c, _d)
 
+    def _sync_runtime_status_state(self, status: dict) -> None:
+        transport = dict(status.get("transport") or {})
+        system_tunnel = dict(status.get("system_tunnel") or {})
+        self.st.transport_connected = bool(transport.get("active"))
+        self.st.transport_detail = str(transport.get("detail") or "")
+        self.st.transport_public_ip = str(transport.get("public_ip") or "")
+        self.st.full_tunnel_requested = bool(system_tunnel.get("requested"))
+        self.st.full_tunnel_active = bool(system_tunnel.get("active") and system_tunnel.get("validated"))
+        self.st.full_tunnel_detail = str(system_tunnel.get("detail") or "")
+        self.st.full_tunnel_public_ip = str(system_tunnel.get("public_ip") or "")
+
     def _poll_runtime_stats(self):
         status = self._runtime.read_runtime_status()
         if status:
+            self._sync_runtime_status_state(status)
             runtime_state = str(status.get("state") or "").strip().lower()
             if runtime_state in {"degraded", "error", "stopped"} and self.st.connected:
                 self.st.connected = False
@@ -3085,6 +3190,13 @@ class DashboardScreen(QWidget):
                 self.st.active_profile_id = ""
                 self.st.active_config_path = ""
                 self.st.active_runtime_mode = ""
+                self.st.transport_connected = False
+                self.st.transport_detail = ""
+                self.st.transport_public_ip = ""
+                self.st.full_tunnel_requested = False
+                self.st.full_tunnel_active = False
+                self.st.full_tunnel_detail = ""
+                self.st.full_tunnel_public_ip = ""
                 self.st.rx_bytes = self.st.tx_bytes = 0
                 self.st.rx_rate = self.st.tx_rate = 0.0
                 self.st.save()
@@ -3093,6 +3205,8 @@ class DashboardScreen(QWidget):
                 self._hlbl.setText(detail[:180])
                 self.connection_state_changed.emit(False)
                 return
+            if self.st.connected:
+                self.refresh()
 
         transfer = self._runtime.read_transfer()
         if transfer is None:
