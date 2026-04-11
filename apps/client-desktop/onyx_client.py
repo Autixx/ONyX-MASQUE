@@ -64,6 +64,7 @@ from PyQt6.QtWidgets import (
 APP_DIR            = Path.home() / ".onyx-client"
 GLOBAL_CONFIG_PATH = APP_DIR / "config.json"
 TOOLS_DIR          = APP_DIR / "bin"
+SYSTEMPROFILE_APP_DIR = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "config" / "systemprofile" / ".onyx-client"
 
 
 def _server_slug(url: str) -> str:
@@ -720,14 +721,22 @@ class LocalTunnelRuntime:
         return None
 
     def read_runtime_status(self) -> dict | None:
-        status_path = self.st.runtime_dir / "lust-client-status.json"
-        if not status_path.exists():
+        candidates = [
+            self.st.runtime_dir / "lust-client-status.json",
+            APP_DIR / "runtime" / "lust-client-status.json",
+            SYSTEMPROFILE_APP_DIR / "runtime" / "lust-client-status.json",
+        ]
+        existing = [path for path in candidates if path.exists()]
+        if not existing:
             return None
-        try:
-            raw = json.loads(status_path.read_text(encoding="utf-8"))
-        except Exception:
-            return None
-        return raw if isinstance(raw, dict) else None
+        for status_path in sorted(existing, key=lambda p: p.stat().st_mtime, reverse=True):
+            try:
+                raw = json.loads(status_path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if isinstance(raw, dict):
+                return raw
+        return None
 
     def _connect_profile(self, profile: dict) -> dict:
         transport = profile["type"]
