@@ -157,6 +157,7 @@ class EdgeSessionManager:
             message = f"open_tcp {host}:{port} channel={channel_id} failed: {exc}"
             _LOG.warning(message)
             raise OSError(message) from exc
+        _LOG.info("open_tcp_ok %s:%s channel=%s", host, port, channel_id)
         channel = EdgeChannel(channel_id=channel_id, network="tcp", host=host, port=port, tcp_writer=writer)
         channel.tcp_reader_task = asyncio.create_task(self._tcp_reader_loop(session.session_id, channel_id, reader, host, port))
         session.channels[channel_id] = channel
@@ -268,16 +269,21 @@ class EdgeSessionManager:
                     "op": "error",
                     "channel_id": channel_id,
                     "network": "tcp",
+                    "host": host,
+                    "port": port,
                     "detail": str(exc),
                 },
             )
         finally:
+            _LOG.info("tcp_reader_close %s:%s channel=%s bytes=%s detail=%s", host, port, channel_id, bytes_read, close_detail)
             self.queue_frame(
                 session_id,
                 {
                     "op": "close",
                     "channel_id": channel_id,
                     "network": "tcp",
+                    "host": host,
+                    "port": port,
                     "detail": close_detail,
                     "bytes": bytes_read,
                 },

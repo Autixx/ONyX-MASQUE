@@ -511,17 +511,30 @@ class EdgeController:
         if op == "error":
             network = str(frame.get("network") or "").strip() or "unknown"
             detail = str(frame.get("detail") or "").strip() or "remote error"
-            self._logger.warning("remote_channel_error channel_id=%s network=%s detail=%s", channel_id, network, detail)
+            host = str(frame.get("host") or "").strip()
+            port = int(frame.get("port") or 0)
+            self._logger.warning(
+                "remote_channel_error channel_id=%s network=%s host=%s port=%s detail=%s",
+                channel_id,
+                network,
+                host,
+                port,
+                detail,
+            )
             self.close_channel(channel_id)
             return
         if op == "close":
             network = str(frame.get("network") or "").strip() or "unknown"
             detail = str(frame.get("detail") or "").strip() or "closed"
             byte_count = int(frame.get("bytes") or 0)
+            host = str(frame.get("host") or "").strip()
+            port = int(frame.get("port") or 0)
             self._logger.info(
-                "remote_channel_close channel_id=%s network=%s bytes=%s detail=%s",
+                "remote_channel_close channel_id=%s network=%s host=%s port=%s bytes=%s detail=%s",
                 channel_id,
                 network,
+                host,
+                port,
                 byte_count,
                 detail,
             )
