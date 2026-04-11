@@ -1369,6 +1369,16 @@ def run(config_path: str, interval_seconds: float, verbose: bool, probe_once: bo
             tunnel_meta = tunnel_runner.start(socks_host=socks_server.listen_host, socks_port=socks_server.listen_port)
             tunnel_meta["socks5_upstream"] = {"host": socks_server.listen_host, "port": socks_server.listen_port}
             logger.info("wintun_ready interface=%s edge_bypass_ip=%s", tunnel_meta.get("interface"), tunnel_meta.get("edge_bypass_ip"))
+            write_status(
+                state="running",
+                config=config,
+                detail="LuST transport is active; system tunnel validation pending",
+                response={**probe_meta, **session_meta},
+                proxy=proxy_meta,
+                tunnel=tunnel_meta,
+                transport=transport_meta,
+                system_tunnel=system_tunnel_meta,
+            )
             system_tunnel_meta = probe_system_tunnel(logger)
         else:
             logger.info("socks_ready host=%s port=%s session_id=%s", socks_server.listen_host, socks_server.listen_port, controller.session_id)

@@ -1,5 +1,5 @@
 # ONyX LuST runtime manifest
 # format: <filename> <sha256>
-lust-client.exe fd309377e7972ff8606a83303f08f3a998b555dd294ff03f4fd6c825f568bc1b
+lust-client.exe d98c07b1a5b972735a8d320f580c00842a7117e6f8711c248d8d8017bdf6baf3
 tun2socks.exe a1f8ac84852ed9a9c7a50949cd0290b6f1594e118bf053416b9b55b7cd7ae414
 wintun.dll e5da8447dc2c320edc0fc52fa01885c103de8c118481f683643cacc3220dafce

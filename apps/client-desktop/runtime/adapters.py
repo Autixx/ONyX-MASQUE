@@ -98,16 +98,37 @@ class LustAdapter(BaseRuntimeAdapter):
         try:
             await asyncio.wait_for(proc.wait(), timeout=1.0)
         except asyncio.TimeoutError:
-            await self._wait_for_runtime_ready(proc, status_path)
-            get_logger("adapters").info("lust_connect_ok profile_id=%s tunnel=%s config=%s", profile.id, tunnel_name, config_path)
-            return ActiveProcessGroup(
-                transport=self.transport.value,
-                profile_id=profile.id,
-                config_path=str(config_path),
-                tunnel_name=tunnel_name,
-                pids=[proc.pid] if proc.pid is not None else [],
-                processes=None,
-            )
+            try:
+                await self._wait_for_runtime_ready(proc, status_path)
+                get_logger("adapters").info("lust_connect_ok profile_id=%s tunnel=%s config=%s", profile.id, tunnel_name, config_path)
+                return ActiveProcessGroup(
+                    transport=self.transport.value,
+                    profile_id=profile.id,
+                    config_path=str(config_path),
+                    tunnel_name=tunnel_name,
+                    pids=[proc.pid] if proc.pid is not None else [],
+                    processes=None,
+                )
+            except Exception:
+                if proc.returncode is None and proc.pid is not None:
+                    try:
+                        if platform.system() == "Windows":
+                            killer = await asyncio.create_subprocess_exec(
+                                "taskkill",
+                                "/PID",
+                                str(proc.pid),
+                                "/T",
+                                "/F",
+                                stdout=asyncio.subprocess.PIPE,
+                                stderr=asyncio.subprocess.PIPE,
+                                **_async_subprocess_hidden_kwargs(),
+                            )
+                            await killer.communicate()
+                        else:
+                            proc.terminate()
+                    except Exception:
+                        pass
+                raise
         stdout = ""
         stderr = ""
         if proc.stdout is not None:
