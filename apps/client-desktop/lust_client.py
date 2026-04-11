@@ -1158,7 +1158,9 @@ class WintunRunner:
                 allow_failure=True,
             )
             best_route_json = self._run_powershell(
-                "Find-NetRoute -RemoteIPAddress 1.1.1.1 -AddressFamily IPv4 -ErrorAction SilentlyContinue | "
+                "Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | "
+                "Where-Object { $_.NextHop -and $_.InterfaceAlias -and $_.State -eq 'Alive' } | "
+                "Sort-Object RouteMetric,InterfaceMetric | "
                 "Select-Object -First 1 InterfaceAlias,NextHop,DestinationPrefix,RouteMetric,InterfaceMetric | ConvertTo-Json -Compress",
                 allow_failure=True,
             )
