@@ -889,6 +889,8 @@ class WintunRunner:
         self._primary_route: PrimaryRoute | None = None
         self._edge_ip: str | None = None
         self._ipv6_disabled_interface: str | None = None
+        self._original_primary_metric: int | None = None
+        self._original_adapter_metric: int | None = None
         self._log_threads: list[threading.Thread] = []
         self._recent_logs: dict[str, deque[str]] = {
             "stdout": deque(maxlen=24),
@@ -1135,6 +1137,7 @@ class WintunRunner:
         self._replace_route(f"{self._edge_ip}/32", self._primary_route.interface_alias, self._primary_route.next_hop)
         for prefix in self._config.tunnel.bypass_routes:
             self._replace_route(prefix, self._primary_route.interface_alias, self._primary_route.next_hop)
+        self._prioritize_tunnel_interface()
         self._replace_route("0.0.0.0/0", self._adapter_name, self._config.tunnel.gateway_v4)
         self._disable_ipv6_on_primary_interface()
 
@@ -1154,8 +1157,14 @@ class WintunRunner:
                 "Select-Object -First 1 DestinationPrefix,NextHop,RouteMetric | ConvertTo-Json -Compress",
                 allow_failure=True,
             )
+            best_route_json = self._run_powershell(
+                "Find-NetRoute -RemoteIPAddress 1.1.1.1 -AddressFamily IPv4 -ErrorAction SilentlyContinue | "
+                "Select-Object -First 1 InterfaceAlias,NextHop,DestinationPrefix,RouteMetric,InterfaceMetric | ConvertTo-Json -Compress",
+                allow_failure=True,
+            )
             adapter_ok = False
             route_ok = False
+            best_route_ok = False
             if adapter_json:
                 try:
                     parsed = json.loads(adapter_json)
@@ -1168,13 +1177,23 @@ class WintunRunner:
                     route_ok = str(parsed.get("DestinationPrefix") or "").strip() == "0.0.0.0/0"
                 except json.JSONDecodeError:
                     route_ok = False
-            if adapter_ok and route_ok:
+            if best_route_json:
+                try:
+                    parsed = json.loads(best_route_json)
+                    best_route_ok = str(parsed.get("InterfaceAlias") or "").strip().lower() == self._adapter_name.lower()
+                except json.JSONDecodeError:
+                    best_route_ok = False
+            if adapter_ok and route_ok and best_route_ok:
                 return
-            last_state = f"adapter={adapter_json or 'missing'} route={route_json or 'missing'}"
+            last_state = (
+                f"adapter={adapter_json or 'missing'} route={route_json or 'missing'} "
+                f"best_route={best_route_json or 'missing'}"
+            )
             time.sleep(0.5)
-        raise RuntimeError(f"LuST Wintun tunnel did not become active: {last_state or 'adapter/route missing'}")
+        raise RuntimeError(f"LuST Wintun tunnel did not become active: {last_state or 'adapter/route/best-route missing'}")
 
     def _teardown_routes(self) -> None:
+        self._restore_interface_metrics()
         self._restore_ipv6_on_primary_interface()
         if self._primary_route is not None and self._edge_ip:
             self._delete_route(f"{self._edge_ip}/32", self._primary_route.interface_alias, self._primary_route.next_hop)
@@ -1222,6 +1241,52 @@ class WintunRunner:
             self._logger.info("ipv6_restored interface=%s", interface_alias)
         except Exception:
             return
+
+    def _prioritize_tunnel_interface(self) -> None:
+        self._original_adapter_metric = self._read_interface_metric(self._adapter_name)
+        self._set_interface_metric(self._adapter_name, 1)
+        if self._primary_route is None:
+            return
+        primary_alias = self._primary_route.interface_alias
+        if primary_alias.lower() == self._adapter_name.lower():
+            return
+        self._original_primary_metric = self._read_interface_metric(primary_alias)
+        self._set_interface_metric(primary_alias, 50)
+
+    def _restore_interface_metrics(self) -> None:
+        if self._original_adapter_metric is not None:
+            try:
+                self._set_interface_metric(self._adapter_name, self._original_adapter_metric)
+            except Exception:
+                pass
+            self._original_adapter_metric = None
+        if self._primary_route is not None and self._original_primary_metric is not None:
+            try:
+                self._set_interface_metric(self._primary_route.interface_alias, self._original_primary_metric)
+            except Exception:
+                pass
+            self._original_primary_metric = None
+
+    def _read_interface_metric(self, interface_name: str) -> int | None:
+        raw = self._run_powershell(
+            f"Get-NetIPInterface -InterfaceAlias {_ps_quote(interface_name)} -AddressFamily IPv4 -ErrorAction SilentlyContinue | "
+            "Select-Object -First 1 InterfaceMetric | ConvertTo-Json -Compress",
+            allow_failure=True,
+        )
+        if not raw:
+            return None
+        try:
+            parsed = json.loads(raw)
+            value = parsed.get("InterfaceMetric") if isinstance(parsed, dict) else None
+            return int(value) if value is not None else None
+        except Exception:
+            return None
+
+    def _set_interface_metric(self, interface_name: str, metric: int) -> None:
+        self._run_powershell(
+            f"Set-NetIPInterface -InterfaceAlias {_ps_quote(interface_name)} -AddressFamily IPv4 -InterfaceMetric {int(metric)} | Out-Null"
+        )
+        self._logger.info("interface_metric_set interface=%s metric=%s", interface_name, metric)
 
     def _replace_route(self, prefix: str, interface_name: str, gateway: str) -> None:
         self._delete_route(prefix, interface_name, gateway)
