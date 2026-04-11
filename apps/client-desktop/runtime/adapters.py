@@ -5,6 +5,7 @@ import json
 import os
 import platform
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -79,8 +80,13 @@ class LustAdapter(BaseRuntimeAdapter):
         tunnel_name = profile.metadata.get("tunnel_name") or "onyxlust0"
         config_path = self._write_config(tunnel_name, profile.config_text or "{}", suffix=".json")
         binary = expected_binary_layout()["lust_client"]
+        status_path = RUNTIME_DIR / "lust-client-status.json"
         if platform.system() == "Windows":
             await self._cleanup_stale_windows_runtime()
+        try:
+            status_path.unlink(missing_ok=True)
+        except Exception:
+            pass
         args = [binary, "--config", str(config_path)]
         get_logger("adapters").info("lust_connect_start profile_id=%s tunnel=%s argv=%s", profile.id, tunnel_name, args)
         proc = await asyncio.create_subprocess_exec(
@@ -92,6 +98,7 @@ class LustAdapter(BaseRuntimeAdapter):
         try:
             await asyncio.wait_for(proc.wait(), timeout=1.0)
         except asyncio.TimeoutError:
+            await self._wait_for_runtime_ready(proc, status_path)
             get_logger("adapters").info("lust_connect_ok profile_id=%s tunnel=%s config=%s", profile.id, tunnel_name, config_path)
             return ActiveProcessGroup(
                 transport=self.transport.value,
@@ -116,6 +123,41 @@ class LustAdapter(BaseRuntimeAdapter):
         except Exception:
             pass
         raise RuntimeError(detail)
+
+    async def _wait_for_runtime_ready(self, proc: asyncio.subprocess.Process, status_path: Path) -> None:
+        deadline = time.monotonic() + 15.0
+        last_state = ""
+        last_detail = ""
+        while time.monotonic() < deadline:
+            if proc.returncode is None:
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=0.2)
+                except asyncio.TimeoutError:
+                    pass
+            if proc.returncode is not None:
+                stdout = ""
+                stderr = ""
+                if proc.stdout is not None:
+                    stdout = (await proc.stdout.read()).decode("utf-8", errors="replace").strip()
+                if proc.stderr is not None:
+                    stderr = (await proc.stderr.read()).decode("utf-8", errors="replace").strip()
+                detail = stderr or stdout or f"lust client exited early with code {proc.returncode}"
+                raise RuntimeError(detail)
+            if status_path.exists():
+                try:
+                    payload = json.loads(status_path.read_text(encoding="utf-8"))
+                except Exception:
+                    await asyncio.sleep(0.2)
+                    continue
+                if isinstance(payload, dict):
+                    last_state = str(payload.get("state") or "").strip().lower()
+                    last_detail = str(payload.get("detail") or "").strip()
+                    if last_state == "running":
+                        return
+                    if last_state in {"error", "degraded", "stopped"}:
+                        raise RuntimeError(last_detail or f"lust runtime entered state={last_state}")
+            await asyncio.sleep(0.2)
+        raise RuntimeError(last_detail or last_state or "lust runtime did not report ready state")
 
     async def disconnect(self, session: ActiveProcessGroup) -> None:
         get_logger("adapters").info("lust_disconnect_start tunnel=%s profile_id=%s pids=%s", session.tunnel_name, session.profile_id, session.pids)
