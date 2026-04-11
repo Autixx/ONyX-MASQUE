@@ -120,7 +120,7 @@ class EdgeSessionManager:
             return None
         try:
             frame = await asyncio.wait_for(session.downstream.get(), timeout=max(1.0, float(timeout_seconds)))
-        except TimeoutError:
+        except asyncio.TimeoutError:
             return None
         session.updated_at = datetime.now(timezone.utc)
         return frame
