@@ -5,6 +5,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 from datetime import datetime, timezone
 from urllib.parse import unquote
 
@@ -16,6 +17,8 @@ from onx.edge.config import EdgeRuntimeConfig, load_edge_config
 from onx.edge.runtime import edge_session_manager
 from onx.edge.upstream import UpstreamGatewayRelay
 from onx.schemas.client_lust import LustClientSessionRead
+
+_LOG = logging.getLogger("onx.lust.edge")
 
 
 def _extract_bearer_token(authorization: str | None) -> str | None:
@@ -264,12 +267,48 @@ def create_app(config: EdgeRuntimeConfig | None = None) -> FastAPI:
                 return await upstream_relay.forward_frame(session, payload)
             return await edge_session_manager.handle_frame(session.session_id, payload)
         except ValueError as exc:
+            _LOG.warning(
+                "lust_post_frame bad_request session_id=%s op=%s channel_id=%s host=%s port=%s detail=%s",
+                session.session_id,
+                payload.get("op"),
+                payload.get("channel_id"),
+                payload.get("host"),
+                payload.get("port"),
+                exc,
+            )
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         except RuntimeError as exc:
+            _LOG.warning(
+                "lust_post_frame unavailable session_id=%s op=%s channel_id=%s host=%s port=%s detail=%s",
+                session.session_id,
+                payload.get("op"),
+                payload.get("channel_id"),
+                payload.get("host"),
+                payload.get("port"),
+                exc,
+            )
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
         except httpx.HTTPError as exc:
+            _LOG.warning(
+                "lust_post_frame upstream_error session_id=%s op=%s channel_id=%s host=%s port=%s detail=%s",
+                session.session_id,
+                payload.get("op"),
+                payload.get("channel_id"),
+                payload.get("host"),
+                payload.get("port"),
+                exc,
+            )
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
         except OSError as exc:
+            _LOG.warning(
+                "lust_post_frame os_error session_id=%s op=%s channel_id=%s host=%s port=%s detail=%s",
+                session.session_id,
+                payload.get("op"),
+                payload.get("channel_id"),
+                payload.get("host"),
+                payload.get("port"),
+                exc,
+            )
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
     @app.get(f"{edge_config.service.path}/frame/poll", status_code=status.HTTP_200_OK)
@@ -404,8 +443,26 @@ def create_app(config: EdgeRuntimeConfig | None = None) -> FastAPI:
         try:
             return await edge_session_manager.handle_frame(session.session_id, payload)
         except ValueError as exc:
+            _LOG.warning(
+                "lust_post_upstream_frame bad_request session_id=%s op=%s channel_id=%s host=%s port=%s detail=%s",
+                session.session_id,
+                payload.get("op"),
+                payload.get("channel_id"),
+                payload.get("host"),
+                payload.get("port"),
+                exc,
+            )
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         except OSError as exc:
+            _LOG.warning(
+                "lust_post_upstream_frame os_error session_id=%s op=%s channel_id=%s host=%s port=%s detail=%s",
+                session.session_id,
+                payload.get("op"),
+                payload.get("channel_id"),
+                payload.get("host"),
+                payload.get("port"),
+                exc,
+            )
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
     @app.get(f"{edge_config.service.path}/upstream/frame/poll", status_code=status.HTTP_200_OK)

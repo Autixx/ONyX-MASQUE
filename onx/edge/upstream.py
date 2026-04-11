@@ -40,7 +40,7 @@ class UpstreamGatewayRelay:
                         headers=self._headers(token),
                         json={},
                     )
-                    response.raise_for_status()
+                    self._raise_for_status(response, action="upstream_session_open")
                     payload = response.json()
                 upstream = {
                     "member": member,
@@ -69,7 +69,7 @@ class UpstreamGatewayRelay:
                 headers=self._headers(token),
                 json=payload,
             )
-            response.raise_for_status()
+            self._raise_for_status(response, action="upstream_frame", op=str(payload.get("op") or ""))
             return response.json()
 
     async def poll_frame(self, session: EdgeSession, *, timeout: float) -> dict[str, Any] | None:
@@ -83,7 +83,7 @@ class UpstreamGatewayRelay:
             )
             if response.status_code == 204:
                 return None
-            response.raise_for_status()
+            self._raise_for_status(response, action="upstream_poll")
             payload = response.json()
             if isinstance(payload, dict) and str(payload.get("op") or "").strip().lower() == "noop":
                 return None
@@ -101,7 +101,7 @@ class UpstreamGatewayRelay:
                 json={"session_id": upstream["session_id"]},
             )
             if response.status_code not in {200, 204, 404}:
-                response.raise_for_status()
+                self._raise_for_status(response, action="upstream_session_close")
 
     def _candidate_members(self, session: EdgeSession) -> list[dict[str, Any]]:
         route_maps = list((self._config.routing or {}).get("route_maps") or [])
@@ -198,6 +198,20 @@ class UpstreamGatewayRelay:
             "Authorization": f"Bearer {token}",
             "User-Agent": "ONyX-LuST-Gateway/0.1",
         }
+
+    @staticmethod
+    def _raise_for_status(response: httpx.Response, *, action: str, op: str | None = None) -> None:
+        if not response.is_error:
+            return
+        body = response.text.strip().replace("\r", " ").replace("\n", " ")
+        if len(body) > 300:
+            body = body[:300] + "..."
+        detail = f"{action} status={response.status_code}"
+        if op:
+            detail += f" op={op}"
+        if body:
+            detail += f" body={body}"
+        raise httpx.HTTPStatusError(detail, request=response.request, response=response)
 
     @staticmethod
     def _require_upstream(session: EdgeSession) -> dict[str, Any]:

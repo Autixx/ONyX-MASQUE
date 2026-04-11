@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import logging
 import secrets
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -65,6 +66,9 @@ class _UdpRelayProtocol(asyncio.DatagramProtocol):
             "detail": str(exc),
         }
         self._manager.queue_frame(self._session_id, frame)
+
+
+_LOG = logging.getLogger("onx.lust.edge")
 
 
 class EdgeSessionManager:
@@ -147,7 +151,12 @@ class EdgeSessionManager:
         port = self._port(frame)
         if channel_id in session.channels:
             return {"ok": True, "channel_id": channel_id, "network": "tcp", "reused": True}
-        reader, writer = await asyncio.open_connection(host, port)
+        try:
+            reader, writer = await asyncio.open_connection(host, port)
+        except OSError as exc:
+            message = f"open_tcp {host}:{port} channel={channel_id} failed: {exc}"
+            _LOG.warning(message)
+            raise OSError(message) from exc
         channel = EdgeChannel(channel_id=channel_id, network="tcp", host=host, port=port, tcp_writer=writer)
         channel.tcp_reader_task = asyncio.create_task(self._tcp_reader_loop(session.session_id, channel_id, reader, host, port))
         session.channels[channel_id] = channel
@@ -158,8 +167,16 @@ class EdgeSessionManager:
         data = _b64decode(frame.get("data_b64"))
         if channel.tcp_writer is None:
             raise ValueError("TCP channel is not writable.")
-        channel.tcp_writer.write(data)
-        await channel.tcp_writer.drain()
+        try:
+            channel.tcp_writer.write(data)
+            await channel.tcp_writer.drain()
+        except OSError as exc:
+            message = (
+                f"tcp_data {channel.channel_id} {channel.host}:{channel.port} "
+                f"bytes={len(data)} failed: {exc}"
+            )
+            _LOG.warning(message)
+            raise OSError(message) from exc
         return {"ok": True, "channel_id": channel.channel_id, "bytes": len(data)}
 
     async def _open_udp(self, session: EdgeSession, frame: dict[str, Any]) -> dict[str, Any]:
@@ -169,10 +186,15 @@ class EdgeSessionManager:
         if channel_id in session.channels:
             return {"ok": True, "channel_id": channel_id, "network": "udp", "reused": True}
         loop = asyncio.get_running_loop()
-        transport, _ = await loop.create_datagram_endpoint(
-            lambda: _UdpRelayProtocol(self, session.session_id, channel_id, host, port),
-            remote_addr=(host, port),
-        )
+        try:
+            transport, _ = await loop.create_datagram_endpoint(
+                lambda: _UdpRelayProtocol(self, session.session_id, channel_id, host, port),
+                remote_addr=(host, port),
+            )
+        except OSError as exc:
+            message = f"open_udp {host}:{port} channel={channel_id} failed: {exc}"
+            _LOG.warning(message)
+            raise OSError(message) from exc
         channel = EdgeChannel(
             channel_id=channel_id,
             network="udp",
@@ -188,7 +210,15 @@ class EdgeSessionManager:
         data = _b64decode(frame.get("data_b64"))
         if channel.udp_transport is None:
             raise ValueError("UDP channel is not writable.")
-        channel.udp_transport.sendto(data)
+        try:
+            channel.udp_transport.sendto(data)
+        except OSError as exc:
+            message = (
+                f"udp_data {channel.channel_id} {channel.host}:{channel.port} "
+                f"bytes={len(data)} failed: {exc}"
+            )
+            _LOG.warning(message)
+            raise OSError(message) from exc
         return {"ok": True, "channel_id": channel.channel_id, "bytes": len(data)}
 
     async def _close(self, session: EdgeSession, frame: dict[str, Any]) -> dict[str, Any]:

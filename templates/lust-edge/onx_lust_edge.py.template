@@ -6,6 +6,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import os
 import secrets
 from dataclasses import dataclass, field
@@ -16,6 +17,8 @@ from urllib.parse import unquote
 import httpx
 from fastapi import FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse, Response, StreamingResponse
+
+LOG = logging.getLogger("onx.lust.edge")
 
 
 def _b64encode(value: bytes) -> str:
@@ -232,7 +235,12 @@ class EdgeSessionManager:
         port = self._port(frame)
         if channel_id in session.channels:
             return {"ok": True, "channel_id": channel_id, "network": "tcp", "reused": True}
-        reader, writer = await asyncio.open_connection(host, port)
+        try:
+            reader, writer = await asyncio.open_connection(host, port)
+        except OSError as exc:
+            message = f"open_tcp {host}:{port} channel={channel_id} failed: {exc}"
+            LOG.warning(message)
+            raise OSError(message) from exc
         channel = EdgeChannel(channel_id=channel_id, network="tcp", host=host, port=port, tcp_writer=writer)
         channel.tcp_reader_task = asyncio.create_task(self._tcp_reader_loop(session.session_id, channel_id, reader, host, port))
         session.channels[channel_id] = channel
@@ -243,8 +251,16 @@ class EdgeSessionManager:
         data = _b64decode(frame.get("data_b64"))
         if channel.tcp_writer is None:
             raise ValueError("TCP channel is not writable.")
-        channel.tcp_writer.write(data)
-        await channel.tcp_writer.drain()
+        try:
+            channel.tcp_writer.write(data)
+            await channel.tcp_writer.drain()
+        except OSError as exc:
+            message = (
+                f"tcp_data {channel.channel_id} {channel.host}:{channel.port} "
+                f"bytes={len(data)} failed: {exc}"
+            )
+            LOG.warning(message)
+            raise OSError(message) from exc
         return {"ok": True, "channel_id": channel.channel_id, "bytes": len(data)}
 
     async def _open_udp(self, session: EdgeSession, frame: dict) -> dict:
@@ -254,10 +270,15 @@ class EdgeSessionManager:
         if channel_id in session.channels:
             return {"ok": True, "channel_id": channel_id, "network": "udp", "reused": True}
         loop = asyncio.get_running_loop()
-        transport, _ = await loop.create_datagram_endpoint(
-            lambda: _UdpRelayProtocol(self, session.session_id, channel_id, host, port),
-            remote_addr=(host, port),
-        )
+        try:
+            transport, _ = await loop.create_datagram_endpoint(
+                lambda: _UdpRelayProtocol(self, session.session_id, channel_id, host, port),
+                remote_addr=(host, port),
+            )
+        except OSError as exc:
+            message = f"open_udp {host}:{port} channel={channel_id} failed: {exc}"
+            LOG.warning(message)
+            raise OSError(message) from exc
         session.channels[channel_id] = EdgeChannel(
             channel_id=channel_id,
             network="udp",
@@ -272,7 +293,15 @@ class EdgeSessionManager:
         data = _b64decode(frame.get("data_b64"))
         if channel.udp_transport is None:
             raise ValueError("UDP channel is not writable.")
-        channel.udp_transport.sendto(data)
+        try:
+            channel.udp_transport.sendto(data)
+        except OSError as exc:
+            message = (
+                f"udp_data {channel.channel_id} {channel.host}:{channel.port} "
+                f"bytes={len(data)} failed: {exc}"
+            )
+            LOG.warning(message)
+            raise OSError(message) from exc
         return {"ok": True, "channel_id": channel.channel_id, "bytes": len(data)}
 
     async def _close(self, session: EdgeSession, frame: dict) -> dict:
@@ -430,7 +459,7 @@ class UpstreamGatewayRelay:
                         headers=self._headers(token),
                         json={},
                     )
-                    response.raise_for_status()
+                    self._raise_for_status(response, action="upstream_session_open")
                     payload = response.json()
                 upstream = {
                     "member": member,
@@ -459,7 +488,7 @@ class UpstreamGatewayRelay:
                 headers=self._headers(token),
                 json=payload,
             )
-            response.raise_for_status()
+            self._raise_for_status(response, action="upstream_frame", op=str(payload.get("op") or ""))
             return response.json()
 
     async def poll_frame(self, session: EdgeSession, *, timeout: float) -> dict | None:
@@ -473,8 +502,11 @@ class UpstreamGatewayRelay:
             )
             if response.status_code == 204:
                 return None
-            response.raise_for_status()
-            return response.json()
+            self._raise_for_status(response, action="upstream_poll")
+            payload = response.json()
+            if isinstance(payload, dict) and str(payload.get("op") or "").strip().lower() == "noop":
+                return None
+            return payload
 
     async def close_session(self, session: EdgeSession) -> None:
         upstream = session.metadata.get("upstream")
@@ -488,7 +520,7 @@ class UpstreamGatewayRelay:
                 json={"session_id": upstream["session_id"]},
             )
             if response.status_code not in {200, 204, 404}:
-                response.raise_for_status()
+                self._raise_for_status(response, action="upstream_session_close")
 
     def _candidate_members(self, session: EdgeSession) -> list[dict]:
         route_maps = list((self._config.routing or {}).get("route_maps") or [])
@@ -559,6 +591,20 @@ class UpstreamGatewayRelay:
     @staticmethod
     def _headers(token: str) -> dict[str, str]:
         return {"Authorization": f"Bearer {token}", "User-Agent": "ONyX-LuST-Gateway/0.1"}
+
+    @staticmethod
+    def _raise_for_status(response: httpx.Response, *, action: str, op: str | None = None) -> None:
+        if not response.is_error:
+            return
+        body = response.text.strip().replace("\r", " ").replace("\n", " ")
+        if len(body) > 300:
+            body = body[:300] + "..."
+        detail = f"{action} status={response.status_code}"
+        if op:
+            detail += f" op={op}"
+        if body:
+            detail += f" body={body}"
+        raise httpx.HTTPStatusError(detail, request=response.request, response=response)
 
     @staticmethod
     def _require_upstream(session: EdgeSession) -> dict:
@@ -716,12 +762,48 @@ def create_app() -> FastAPI:
                 return await upstream_relay.forward_frame(session, payload)
             return await EDGE_SESSION_MANAGER.handle_frame(session.session_id, payload)
         except ValueError as exc:
+            LOG.warning(
+                "lust_post_frame bad_request session_id=%s op=%s channel_id=%s host=%s port=%s detail=%s",
+                session.session_id,
+                payload.get("op"),
+                payload.get("channel_id"),
+                payload.get("host"),
+                payload.get("port"),
+                exc,
+            )
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         except RuntimeError as exc:
+            LOG.warning(
+                "lust_post_frame unavailable session_id=%s op=%s channel_id=%s host=%s port=%s detail=%s",
+                session.session_id,
+                payload.get("op"),
+                payload.get("channel_id"),
+                payload.get("host"),
+                payload.get("port"),
+                exc,
+            )
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
         except httpx.HTTPError as exc:
+            LOG.warning(
+                "lust_post_frame upstream_error session_id=%s op=%s channel_id=%s host=%s port=%s detail=%s",
+                session.session_id,
+                payload.get("op"),
+                payload.get("channel_id"),
+                payload.get("host"),
+                payload.get("port"),
+                exc,
+            )
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
         except OSError as exc:
+            LOG.warning(
+                "lust_post_frame os_error session_id=%s op=%s channel_id=%s host=%s port=%s detail=%s",
+                session.session_id,
+                payload.get("op"),
+                payload.get("channel_id"),
+                payload.get("host"),
+                payload.get("port"),
+                exc,
+            )
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
     @app.get(f"{config.service.path}/frame/poll", status_code=status.HTTP_200_OK)
@@ -829,8 +911,26 @@ def create_app() -> FastAPI:
         try:
             return await EDGE_SESSION_MANAGER.handle_frame(session.session_id, payload)
         except ValueError as exc:
+            LOG.warning(
+                "lust_post_upstream_frame bad_request session_id=%s op=%s channel_id=%s host=%s port=%s detail=%s",
+                session.session_id,
+                payload.get("op"),
+                payload.get("channel_id"),
+                payload.get("host"),
+                payload.get("port"),
+                exc,
+            )
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         except OSError as exc:
+            LOG.warning(
+                "lust_post_upstream_frame os_error session_id=%s op=%s channel_id=%s host=%s port=%s detail=%s",
+                session.session_id,
+                payload.get("op"),
+                payload.get("channel_id"),
+                payload.get("host"),
+                payload.get("port"),
+                exc,
+            )
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
     @app.get(f"{config.service.path}/upstream/frame/poll", status_code=status.HTTP_200_OK)
