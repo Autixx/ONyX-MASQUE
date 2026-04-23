@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from onx.api.deps import get_database_session
 from onx.db.models.user import User, UserStatus
 from onx.schemas.users import UserCreate, UserRead, UserUpdate
-from onx.services.admin_web_auth_service import admin_web_auth_service
+from onx.services.admin_web_auth_service import AdminWebAuthError, admin_web_auth_service
 
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -31,17 +31,20 @@ def create_user(payload: UserCreate, db: Session = Depends(get_database_session)
     existing = db.scalar(select(User).where((User.username == payload.username.strip()) | (User.email == payload.email.strip().lower())))
     if existing is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="User with this username or email already exists.")
-    user = User(
-        username=payload.username.strip(),
-        email=payload.email.strip().lower(),
-        password_hash=admin_web_auth_service.hash_password(payload.password),
-        status=payload.status,
-        first_name=payload.first_name,
-        last_name=payload.last_name,
-        referral_code=payload.referral_code,
-        usage_goal=payload.usage_goal,
-        requested_device_count=payload.requested_device_count,
-    )
+    try:
+        user = User(
+            username=payload.username.strip(),
+            email=payload.email.strip().lower(),
+            password_hash=admin_web_auth_service.hash_password(payload.password),
+            status=payload.status,
+            first_name=payload.first_name,
+            last_name=payload.last_name,
+            referral_code=payload.referral_code,
+            usage_goal=payload.usage_goal,
+            requested_device_count=payload.requested_device_count,
+        )
+    except AdminWebAuthError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     db.add(user)
     db.commit()
     db.refresh(user)
@@ -63,7 +66,10 @@ def update_user(user_id: str, payload: UserUpdate, db: Session = Depends(get_dat
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
     for field_name, value in payload.model_dump(exclude_unset=True).items():
         if field_name == "password":
-            user.password_hash = admin_web_auth_service.hash_password(value)
+            try:
+                user.password_hash = admin_web_auth_service.hash_password(value)
+            except AdminWebAuthError as exc:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
             continue
         setattr(user, field_name, value)
     db.add(user)

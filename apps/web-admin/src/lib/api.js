@@ -43,10 +43,25 @@ window.apiFetch = async function apiFetch(path, options){
   }
   if(!response.ok){
     var rawDetail = payload && payload.detail ? payload.detail : ('HTTP '+response.status);
-    var detail = rawDetail;
-    if(typeof detail === 'object'){
-      detail = detail.message || JSON.stringify(detail);
-    }
+    var formatDetail = function(detail){
+      if(typeof detail === 'string'){ return detail; }
+      if(Array.isArray(detail)){
+        var parts = detail.map(function(item){
+          if(item && typeof item === 'object'){
+            var msg = item.msg || item.message || '';
+            var loc = Array.isArray(item.loc) ? item.loc.filter(function(part){ return part !== 'body' && part !== 'query' && part !== 'path'; }).join('.') : '';
+            if(msg){ return loc ? (loc + ': ' + msg) : msg; }
+          }
+          return typeof item === 'string' ? item : '';
+        }).filter(Boolean);
+        return parts.join('; ');
+      }
+      if(detail && typeof detail === 'object'){
+        return detail.message || detail.detail || JSON.stringify(detail);
+      }
+      return String(detail || '');
+    };
+    var detail = formatDetail(rawDetail);
     var error = new Error(detail);
     error.status = response.status;
     error.payload = payload;

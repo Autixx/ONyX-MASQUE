@@ -4,6 +4,7 @@ import base64
 import hashlib
 import hmac
 import os
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
 
@@ -142,8 +143,7 @@ class AdminWebAuthService:
     ) -> AdminUser:
         if not self.verify_password(user.password_hash, current_password):
             raise AdminWebAuthError("Current password is invalid.")
-        if len(new_password) < 8:
-            raise AdminWebAuthError("New password must be at least 8 characters long.")
+        self.validate_password_strength(new_password, label="New password")
         user.password_hash = self.hash_password(new_password)
         db.add(user)
         db.commit()
@@ -166,8 +166,7 @@ class AdminWebAuthService:
         }
 
     def hash_password(self, password: str) -> str:
-        if not password:
-            raise AdminWebAuthError("Password must not be empty.")
+        self.validate_password_strength(password)
         iterations = max(100000, int(self._settings.admin_web_password_hash_iterations))
         salt = os.urandom(16)
         derived = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
@@ -192,6 +191,21 @@ class AdminWebAuthService:
             return False
         actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
         return hmac.compare_digest(actual, expected)
+
+    @staticmethod
+    def validate_password_strength(password: str, *, label: str = "Password") -> None:
+        if not password:
+            raise AdminWebAuthError(f"{label} must not be empty.")
+        if len(password) < 8:
+            raise AdminWebAuthError(f"{label} must be at least 8 characters long.")
+        if len(password) > 255:
+            raise AdminWebAuthError(f"{label} must be at most 255 characters long.")
+        if not re.search(r"[A-Z]", password):
+            raise AdminWebAuthError(f"{label} must contain at least one uppercase letter.")
+        if not re.search(r"[a-z]", password):
+            raise AdminWebAuthError(f"{label} must contain at least one lowercase letter.")
+        if not re.search(r"\d", password):
+            raise AdminWebAuthError(f"{label} must contain at least one digit.")
 
     @staticmethod
     def hash_session_token(token: str) -> str:

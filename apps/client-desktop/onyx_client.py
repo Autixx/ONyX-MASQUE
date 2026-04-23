@@ -21,6 +21,7 @@ import random
 import re
 import secrets
 import shutil
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -327,8 +328,31 @@ def _is_direct_tls_endpoint(base_url: str) -> bool:
         return False
 
 
+def _candidate_ca_paths(base_url: str) -> list[Path]:
+    server_dir = _server_dir(base_url) if base_url else APP_DIR
+    candidates: list[Path] = []
+    for root in (server_dir, APP_DIR):
+        for name in ("server-ca.pem", "server-ca.crt", "ca.pem", "ca.crt", "root-ca.pem", "root-ca.crt"):
+            path = root / name
+            if path not in candidates:
+                candidates.append(path)
+    return candidates
+
+
+def _http_verify_config(base_url: str) -> str | bool | ssl.SSLContext:
+    normalized = normalize_api_base_url(base_url or "")
+    if _is_direct_tls_endpoint(normalized):
+        return False
+    context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+    for candidate in _candidate_ca_paths(normalized):
+        if candidate.exists():
+            context.load_verify_locations(cafile=str(candidate))
+            break
+    return context
+
+
 def httpx_client(*, timeout: float | int, base_url: str | None = None) -> httpx.Client:
-    verify = not _is_direct_tls_endpoint(base_url or "")
+    verify = _http_verify_config(base_url or "")
     return httpx.Client(timeout=timeout, trust_env=False, verify=verify)
 
 
@@ -345,14 +369,43 @@ def _raise_for_device(response: httpx.Response) -> None:
 
 
 def response_detail(response: httpx.Response) -> str:
+    def _format_detail(detail) -> str | None:
+        if isinstance(detail, str):
+            return detail.strip() or None
+        if isinstance(detail, list):
+            parts: list[str] = []
+            for item in detail:
+                if isinstance(item, dict):
+                    message = str(item.get("msg") or item.get("message") or "").strip()
+                    location = item.get("loc")
+                    if message:
+                        if isinstance(location, list) and location:
+                            field = ".".join(str(part) for part in location if part not in {"body", "query", "path"})
+                            parts.append(f"{field}: {message}" if field else message)
+                        else:
+                            parts.append(message)
+                        continue
+                formatted = _format_detail(item)
+                if formatted:
+                    parts.append(formatted)
+            return "; ".join(parts) if parts else None
+        if isinstance(detail, dict):
+            message = str(detail.get("message") or detail.get("detail") or "").strip()
+            if message:
+                return message
+            return None
+        return str(detail).strip() or None
+
     try:
         payload = response.json()
         if isinstance(payload, dict):
-            detail = payload.get("detail")
+            detail = _format_detail(payload.get("detail"))
             if detail:
-                return str(detail)
+                return detail
         if payload is not None:
-            return str(payload)
+            formatted = _format_detail(payload)
+            if formatted:
+                return formatted
     except Exception:
         pass
     text = (response.text or "").strip()

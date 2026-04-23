@@ -61,6 +61,17 @@ def _ps_quote(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
+def _candidate_ca_paths(endpoint_host: str) -> list[Path]:
+    host_slug = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in endpoint_host.strip().lower()) or "default"
+    candidates: list[Path] = []
+    for root in (RUNTIME_DIR / host_slug, RUNTIME_DIR, CLIENT_HOME):
+        for name in ("server-ca.pem", "server-ca.crt", "ca.pem", "ca.crt", "root-ca.pem", "root-ca.crt"):
+            path = root / name
+            if path not in candidates:
+                candidates.append(path)
+    return candidates
+
+
 @dataclass(slots=True)
 class EndpointConfig:
     scheme: str
@@ -359,21 +370,24 @@ def load_config(path: str) -> LustConfig:
 def build_tls_verify(config: LustConfig) -> str | bool | ssl.SSLContext:
     if config.endpoint.scheme != "https":
         return False
-    if config.mtls.mode != "required":
-        return True
     ensure_dirs()
+    context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+    for candidate in _candidate_ca_paths(config.endpoint.host):
+        if candidate.exists():
+            context.load_verify_locations(cafile=str(candidate))
+            break
     cert_path = config.mtls.client_certificate_path
     key_path = config.mtls.client_key_path
     if config.mtls.client_certificate_pem:
         cert_file = RUNTIME_DIR / "lust-client-runtime-cert.pem"
         cert_file.write_text(config.mtls.client_certificate_pem.strip() + "\n", encoding="utf-8")
         cert_path = str(cert_file)
-    context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
     if config.mtls.ca_certificate_pem:
         ca_file = RUNTIME_DIR / "lust-client-runtime-ca.pem"
         ca_file.write_text(config.mtls.ca_certificate_pem.strip() + "\n", encoding="utf-8")
         context.load_verify_locations(cafile=str(ca_file))
-    context.load_cert_chain(certfile=str(cert_path), keyfile=str(key_path))
+    if config.mtls.mode == "required":
+        context.load_cert_chain(certfile=str(cert_path), keyfile=str(key_path))
     return context
 
 

@@ -12,7 +12,7 @@ from onx.db.models.registration import Registration, RegistrationStatus
 from onx.db.models.user import User, UserStatus
 from onx.schemas.client_auth import ClientRegistrationCreate
 from onx.schemas.registrations import RegistrationCreate
-from onx.services.admin_web_auth_service import admin_web_auth_service
+from onx.services.admin_web_auth_service import AdminWebAuthError, admin_web_auth_service
 from onx.services.referral_code_service import referral_code_service
 from onx.services.subscription_service import subscription_service
 
@@ -20,10 +20,14 @@ from onx.services.subscription_service import subscription_service
 class RegistrationService:
     def create_admin_registration(self, db: Session, payload: RegistrationCreate) -> Registration:
         referral = self._resolve_referral_code(db, payload.referral_code)
+        try:
+            password_hash = admin_web_auth_service.hash_password(payload.password) if payload.password else None
+        except AdminWebAuthError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         registration = Registration(
             username=payload.username.strip(),
             email=payload.email.strip().lower(),
-            password_hash=admin_web_auth_service.hash_password(payload.password) if payload.password else None,
+            password_hash=password_hash,
             first_name=(payload.first_name or None),
             last_name=(payload.last_name or None),
             referral_code=(payload.referral_code or None),
@@ -49,10 +53,14 @@ class RegistrationService:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Password confirmation does not match.")
         self._ensure_username_email_available(db, username=payload.username, email=payload.email)
         referral = self._resolve_referral_code(db, payload.referral_code)
+        try:
+            password_hash = admin_web_auth_service.hash_password(payload.password)
+        except AdminWebAuthError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         registration = Registration(
             username=payload.username.strip(),
             email=payload.email.strip().lower(),
-            password_hash=admin_web_auth_service.hash_password(payload.password),
+            password_hash=password_hash,
             first_name=payload.first_name.strip(),
             last_name=payload.last_name.strip(),
             referral_code=(payload.referral_code or None),
